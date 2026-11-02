@@ -35,6 +35,31 @@ controlled tests do not establish authenticated App access or live merge accepta
 Do not copy a head result to M, create an arbitrary successful check, or allow
 candidate changes to approve their own verification meaning.
 
+## Native merge trial preparation
+
+The branch-only `create-canary` mode prepares one fixed data-only PR from the
+reviewed main commit. It changes only `canary.txt` to `canary=native-merge-001`.
+The workflow uses its ordinary `GITHUB_TOKEN` to publish the Git objects, create
+`canary/native-merge-001` and open the PR as `github-actions[bot]`. This separates
+the PR author from the human reviewer `p1c2u`. It receives no App key, cannot
+publish the required App check and performs no merge or protection change.
+
+This mode runs only from `codex/native-merge-trial`, with an empty PR input and
+the first workflow attempt. It never overwrites the fixed branch or retries an
+uncertain write. A later run may discover an existing exact PR but cannot use a
+new run or output path to reset a previous attempt's write allowance. Its sole
+artifact is `author-result.json`; the default repository token permissions stay
+read-only, with write permissions limited to this job.
+
+PRs created with `GITHUB_TOKEN` do not trigger ordinary PR workflows. The
+existing main-only `verify` mode must therefore be dispatched explicitly for
+the created PR. The genuine verifier App then runs the fixed tests and publishes
+its check on exact M; the human supplies an actual independent review.
+
+[The native trial runbook](docs/NATIVE-MERGE-TRIAL.md) describes the remaining
+runtime approval and persistent-host requirements. PR preparation and successful
+preflight do not grant native merge authority.
+
 ## Trusted manual App workflow
 
 [The account setup guide](docs/APP-SETUP.md) describes the selected App identities,
