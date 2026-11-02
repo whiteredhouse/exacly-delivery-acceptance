@@ -1,0 +1,17 @@
+{
+  "repository": {
+    "id": 1442278205,
+    "full_name": "whiteredhouse/exacly-delivery-acceptance"
+  },
+  "check_name": "exacly-generated-merge",
+  "apps": {
+    "verifier": {
+      "app_id": 5572341,
+      "installation_id": 177653019
+    },
+    "merger": {
+      "app_id": 5572362,
+      "installation_id": 177653055
+    }
+  }
+}

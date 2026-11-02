@@ -12,9 +12,10 @@ python3 -B -m unittest discover -s tests -v
 
 `canary-tests` is the only ordinary CI check. It runs for every pull request and
 push to `main`, has a five-minute deadline and receives only `contents: read`.
-Checkout is pinned and does not persist credentials. There are no tag triggers,
-deployment workflows, automatic mergers, privileged pull-request triggers or
-write-capable jobs in this scaffold.
+Checkout is pinned and does not persist credentials. This ordinary job receives
+no App credentials. There are no tag triggers, application deployments, automatic
+mergers or privileged pull-request triggers. The separate manual App workflow
+below can create genuine verification metadata under its narrowly scoped App.
 
 ## Ordinary CI and the generated merge commit
 
@@ -28,9 +29,46 @@ This ordinary CI workflow alone therefore does not make the repository compatibl
 The local read-only verifier below checks one narrowly bounded candidate against
 independently pinned trusted source. A separately approved producer App must still
 establish fresh GitHub identities and publish its actual verification result on M.
-This repository contains no check-publishing code or write-capable verification
-workflow. Do not copy a head result to M, create an arbitrary successful check, or
-allow candidate changes to approve their own verification meaning.
+The manual workflow below implements that bounded producer. Its source and
+controlled tests do not establish authenticated App access or live merge acceptance.
+Do not copy a head result to M, create an arbitrary successful check, or allow
+candidate changes to approve their own verification meaning.
+
+## Trusted manual App workflow
+
+[The account setup guide](docs/APP-SETUP.md) describes the selected App identities,
+classic protection and exact main-only environment restrictions. Publish and
+review all source first, apply and read back those guards, then store each key
+only in its own protected environment. App registration and a matching ID are
+not an authenticated preflight or an Exacly runtime grant.
+
+`Trusted App bootstrap` runs only by manual dispatch from this repository's
+`main`. Its `preflight` mode authenticates each one-repository role and observes
+actual endpoint access. Its `verify` mode uses only the verifier App to check
+one selected same-repository PR whose sole change is the bounded `canary.txt`
+label. Candidate Git objects are data; the App token never enters Git, verifier
+or business-test subprocess environments.
+
+The fixed helper validates current B/H/M/tree and the protected trusted source,
+runs the local verifier's seven actual business cases, then rechecks GitHub
+identities before creating at most one `exacly-generated-merge` check on exact M.
+Only the genuine verifier App's result can satisfy the configured required check.
+The merger preflight reads scope, permissions and protection; it performs no
+merge, source/ref update, PR creation, review dismissal or policy change.
+
+The hosted verification path checks its real run and complete bounded workflow
+history. Reruns and prior unsuccessful verification for the same PR block a new
+check write; a unique exact existing result may be discovered read-only. A new
+output path or replacement PR does not resolve an earlier unknown effect. The
+Checks API has no global conditional-create guarantee: no automatic POST retry,
+global exactly-once claim or implicit uncertainty reset is made here.
+
+GNU timeout and the job deadline bound the hosted invocation. Private runner
+output is temporary, and no raw evidence directory or credential is uploaded.
+Select protected durable retention separately before a live merge trial. A
+successful check remains verification metadata; actual independent review,
+current native readiness and the separately approved finite merge packet are
+still required. No App keys have to be sent through chat or committed here.
 
 ## Read-only generated-merge verifier
 
@@ -68,8 +106,8 @@ candidate repository must be separate, non-nested directories. Its closed schema
 }
 ```
 
-The inventory covers the entire reviewed base tree, including the app, both test
-files, verifier, workflow, README and baseline canary. The pin hashes the actual
+The inventory covers the entire reviewed base tree, including the app, all test
+files, tools, workflows, configuration, README and baseline canary. The pin hashes the actual
 manifest bytes. A candidate-supplied manifest or self-selected pin is insufficient.
 
 The verifier:
@@ -157,6 +195,8 @@ private retention location. Do not commit tokens, private keys or approval
 documents to this public repository. A fixture issuer name, matching content
 digest or successful CI run is not independent human approval.
 
-This scaffold performs no provider writes and grants no merge authority. Source
-verification and authentic operational acceptance remain separate. The original
-Exacly product model's lifecycle and observed state are not changed by these files.
+The application and local verifier perform no provider writes. The manual App
+helper can produce only the scoped verification check described above; it grants
+no merge authority. Source verification and authentic operational acceptance
+remain separate. The original Exacly product model's lifecycle and observed state
+are not changed by these files.
