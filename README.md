@@ -15,7 +15,8 @@ push to `main`, has a five-minute deadline and receives only `contents: read`.
 Checkout is pinned and does not persist credentials. This ordinary job receives
 no App credentials. There are no tag triggers, application deployments, automatic
 mergers or privileged pull-request triggers. The separate manual App workflow
-below can create genuine verification metadata under its narrowly scoped App.
+below can create genuine verification metadata or collect advisory credential
+evidence under its narrowly scoped App.
 
 ## Ordinary CI and the generated merge commit
 
@@ -42,9 +43,9 @@ review all source first, apply and read back those guards, then store each key
 only in its own protected environment. App registration and a matching ID are
 not an authenticated preflight or an Exacly runtime grant.
 
-`Trusted App bootstrap` runs only by manual dispatch from this repository's
-`main`. Its `preflight` mode authenticates each one-repository role and observes
-actual endpoint access. Its `verify` mode uses only the verifier App to check
+`Trusted App bootstrap` runs only by manual dispatch. Its main-only `preflight`
+mode checks each one-repository role and observes actual endpoint access. Its
+main-only `verify` mode uses only the verifier App to check
 one selected same-repository PR whose sole change is the bounded `canary.txt`
 label. Candidate Git objects are data; the App token never enters Git, verifier
 or business-test subprocess environments.
@@ -53,8 +54,19 @@ The fixed helper validates current B/H/M/tree and the protected trusted source,
 runs the local verifier's seven actual business cases, then rechecks GitHub
 identities before creating at most one `exacly-generated-merge` check on exact M.
 Only the genuine verifier App's result can satisfy the configured required check.
-The merger preflight reads scope, permissions and protection; it performs no
-merge, source/ref update, PR creation, review dismissal or policy change.
+The main merger preflight attempts its legacy scope, role and protection checks;
+it performs no merge, source/ref update, PR creation, review dismissal or policy change.
+
+The separately owner-reviewed `codex/preflight-diagnostics` branch has two
+additional modes. `diagnose-merger` reproduces the unchanged original helper's
+rejection of the App token's observed `push: false` flag. `app-grant-preflight`
+uses pinned native Exacly from [PR #117](https://github.com/whiteredhouse/exacly/pull/117)
+to validate an advisory token-bound App-grant candidate and read actual server
+protection. It reports no independent mint approval, PR readiness or merge
+authority. Both modes require explicit key release through the separate,
+owner-reviewed `canary-merger-diagnostic` environment and approval of the exact
+frozen run; they do not need to merge into main. See the
+[branch preflight setup](docs/APP-SETUP.md#7-owner-reviewed-app-grant-candidate-preflight).
 
 The hosted verification path checks its real run and complete bounded workflow
 history. Reruns and prior unsuccessful verification for the same PR block a new
@@ -65,6 +77,10 @@ global exactly-once claim or implicit uncertainty reset is made here.
 
 GNU timeout and the job deadline bound the hosted invocation. Private runner
 output is temporary, and no raw evidence directory or credential is uploaded.
+Only `app-grant-preflight` selects three safe advisory metadata files for
+seven-day artifact retention. The pinned action attempts token revocation during
+post-job cleanup; verify its actual result. The candidate is not an installed
+configuration and cannot supply approval or a token for a later job.
 Select protected durable retention separately before a live merge trial. A
 successful check remains verification metadata; actual independent review,
 current native readiness and the separately approved finite merge packet are
