@@ -21,7 +21,7 @@ actor diagnostic or collect advisory App-grant and protection evidence:
 | `preflight` | `main` | Original read-only verifier/merger role checks |
 | `verify` | `main` | At most one genuine `exacly-generated-merge` check for a bounded canary PR |
 | `diagnose-merger` | `codex/preflight-diagnostics` | Filtered diagnostic around the unchanged original merger helper |
-| `app-grant-preflight` | `codex/preflight-diagnostics` | Advisory mint candidate and actual credential/protection reads using pinned native Exacly |
+| `app-grant-preflight` | `codex/preflight-diagnostics` | Advisory six-permission mint candidate, actual credential/protection reads and fixed required-condition endpoint probes |
 
 Its source implementation and controlled tests are separate from actual hosted
 execution, successful provider readback and authentic merge acceptance. Do not
@@ -130,6 +130,16 @@ reduced to the role below, and automatic post-job token revocation remains on.
 | Pull requests | Read | Read |
 | Administration | None | Read |
 | Metadata | Read | Read |
+| Commit statuses | None | Read in the branch `app-grant-preflight` only |
+
+The main merger preflight and the original `diagnose-merger` job still request
+their original five permissions. Before the new branch preflight, the App owner
+must explicitly add **Commit statuses: Read-only** to merger App `5572362` under
+its Repository permissions, save the change, and approve any pending permission
+update for installation `177653055` in `whiteredhouse`. Keep the installation
+restricted to this repository. The workflow cannot grant a permission that the
+App or installation has not approved. This source change does not update those
+settings and does not grant a merge operation.
 
 Token minting and revocation are credential operations. The preflight helpers
 perform provider reads only; a write-capable token does not authorize an effect.
@@ -199,8 +209,9 @@ private output directory is new, absolute and outside the checkout. The helper
 receives its installation token only through `CANARY_APP_TOKEN`. Only the verify
 job adds Actions read to the ordinary Contents-read token and passes it through
 the separate `CANARY_ACTIONS_READ_TOKEN` variable for hosted-run history reads.
-Neither App gains an additional permission, and candidate Git and test subprocesses
-receive neither token. No raw output directory, key,
+Adding Actions read to that job does not expand either App. The branch
+diagnostic's separate status-read permission requires the approval in section 7.
+Candidate Git and test subprocesses receive neither token. No raw output directory, key,
 token or credential-bearing error is uploaded as an Actions artifact. Safe
 receipt/status summaries may appear in the job log. Select protected durable
 retention separately before any live merge trial; runner-local output is temporary.
@@ -210,7 +221,8 @@ generic durable ledger, atomic cross-provider transaction or exactly-once guaran
 
 This check is verification metadata. It grants no merge, review, publication,
 deployment, rollback or Exacly runtime delegation. Exact required-check App/SHA,
-current reviews, PR CLEAN state and the complete independently approved finite
+current reviews, native `CLEAN` or fully evidenced supported `UNSTABLE` readiness,
+and the complete independently approved finite
 trial packet remain separate prerequisites. Do not retry an uncertain provider
 effect blindly or treat a fixture result as authentic acceptance.
 
@@ -221,15 +233,20 @@ The branch-only modes use the separate literal environment
 original helper at `723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8`; it does not
 install the new actor format or replace the main preflight. The
 `app-grant-preflight` mode checks out native Exacly at reviewed commit
-[`2331d84b1b29832b3c91f291a5daef765b4c0c7d`](https://github.com/whiteredhouse/exacly/commit/2331d84b1b29832b3c91f291a5daef765b4c0c7d)
-from [core PR #117](https://github.com/whiteredhouse/exacly/pull/117). Its packager
+[`9a5cd90b8d3c3b2acc2a00e7e68e175558025432`](https://github.com/whiteredhouse/exacly/commit/9a5cd90b8d3c3b2acc2a00e7e68e175558025432)
+from merged [core PR #118](https://github.com/whiteredhouse/exacly/pull/118). Its packager
 checks that source and the native file pins before using the candidate APIs.
 The diagnostic branch is an independently reviewed source route; this draft PR
 does not need to merge into protected main to run it.
 
-The old diagnostic environment was deleted after the owner-approved diagnostic.
-The owner must explicitly restore it before authorizing this new source to use
-the merger key. In **Settings → Environments**, configure exactly:
+The earlier five-permission preflight at source `704d930` passed six GETs and
+revoked its token. That evidence remains attached to its original source and
+grant. The updated preflight adds status-read access and four endpoint probes;
+the earlier run's approval does not authorize this source or a new token.
+
+Before the new run, read back the existing diagnostic environment. If it was
+removed after the earlier diagnostic, the owner must restore it. In
+**Settings → Environments**, the exact configuration is:
 
 - Environment name `canary-merger-diagnostic`.
 - **Selected branches and tags** with one **Branch** rule named
@@ -258,7 +275,8 @@ only `app-grant-preflight` executes. A changed source requires a new review and
 approval, rather than a broader environment rule or a rerun of old code.
 
 The pinned official token action requests the same merger App, installation,
-single repository and five permissions shown above. It retains automatic
+single repository and the six permissions shown above, including the separately
+approved Commit statuses read permission. It retains automatic
 post-job token revocation. `tools/app_grant_preflight.py` records a
 `trusted-github-actions-mint-run-attestation`: pinned workflow/action and source,
 actual run/attempt and installation output, requested permissions and a digest
@@ -267,31 +285,51 @@ the raw authenticated mint API response, issuer introspection or observed GitHub
 expiry. Its local candidate-use window is 900 seconds; it does not claim the
 token remains valid until that window ends.
 
-The candidate deliberately omits `identity_approval_digest`. Native
+The candidate uses grant schema `0.2.0` and deliberately omits `identity_approval_digest`. Native
 `validate_installation_grant_candidate` checks the supplied candidate and live
 facts; the installed actor schema rejects that unapproved candidate. The
-packager checks actual UTC before every one of six fixed GETs: repository,
+packager checks actual UTC before every one of the original six fixed GETs: repository,
 installation repository scope, current main ref, classic protection, required
 signatures and effective branch rules. It retains observed role flags and uses
 the native protection normalizer to check the selected settings. It performs
 no provider mutation beyond the separate token mint/revocation operations.
 
+Four additional fixed reads probe access to the endpoints used by the native
+`UNSTABLE` route: the complete combined legacy-status inventories for exact
+`H` and `M`, the native fixed GraphQL query for repository/base/PR identities,
+branch protection and review threads, and the exact `B...H` comparison. The
+selected PR is #5, with `B=723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8`,
+`H=7e5f04446bd7eb2bd69132f27e8d20c9a967a156` and
+`M=3196bd964e77c0963d2f00ff20c71408a345b54c`. These are read-only probes;
+the sole permitted POST contains that fixed GraphQL query, never a mutation.
+The maximum is ten read attempts, each checked against the same local lease
+and work deadline. No endpoint, query, PR or revision is selected by an input.
+
+`readiness-endpoint-facts.json` retains selected bounded public fields from those
+responses. It excludes raw provider responses, commit-file contents and errors.
+Complete endpoint access is separate from satisfying native readiness: failed
+statuses, unresolved conversations or an unsupported policy can be observed
+without becoming successful checks. The diagnostic does not duplicate the
+native readiness decision or manufacture an approved actor to call it.
+
 A successful report sets
-`credential_and_protection_candidate_checks_passed: true` while retaining
+both `credential_and_protection_candidate_checks_passed: true` and
+`endpoint_access_checks_passed: true` while retaining
 `independent_mint_approval: false`, `pr_readiness_verified: false` and
-`merge_authority: false`. It has not selected or verified a PR's current check
-results/reviews, performed `updateRefs`, installed a configuration or established
-native merge readiness. A failure or missing artifact remains a failure; the
+`merge_authority: false`. It has not established that a PR's checks and reviews
+satisfy native readiness, performed `updateRefs` or installed a configuration.
+A failure or missing artifact remains a failure; the
 run cannot manufacture approval or a genuine positive acceptance result.
 
-The upload action selects only these three advisory files for seven-day retention:
+The upload action selects only these four advisory files for seven-day retention:
 
 - `mint-attestation.json`
 - `actor-candidate.json`
 - `preflight.json`
+- `readiness-endpoint-facts.json`
 
 The producer excludes token/private-key bytes and raw credential-bearing errors.
-Review all three files together on a passing run; incomplete output is not a
+Review all four files together on a passing run; incomplete output is not a
 complete proof. This metadata artifact is not the private original-goal journal
 or durable effect/recovery retention required for a protected merge trial.
 

@@ -60,10 +60,13 @@ it performs no merge, source/ref update, PR creation, review dismissal or policy
 The separately owner-reviewed `codex/preflight-diagnostics` branch has two
 additional modes. `diagnose-merger` reproduces the unchanged original helper's
 rejection of the App token's observed `push: false` flag. `app-grant-preflight`
-uses pinned native Exacly from [PR #117](https://github.com/whiteredhouse/exacly/pull/117)
-to validate an advisory token-bound App-grant candidate and read actual server
-protection. It reports no independent mint approval, PR readiness or merge
-authority. Both modes require explicit key release through the separate,
+uses pinned merged native Exacly from [PR #118](https://github.com/whiteredhouse/exacly/pull/118)
+to validate an advisory token-bound App-grant candidate, read actual server
+protection and probe the added required-condition endpoints for the existing
+canary PR #5. Its six-permission grant requests Commit statuses read access,
+which requires the App owner's explicit approval. Successful endpoint access
+establishes no independent mint approval, PR readiness or merge authority.
+Both modes require explicit key release through the separate,
 owner-reviewed `canary-merger-diagnostic` environment and approval of the exact
 frozen run; they do not need to merge into main. See the
 [branch preflight setup](docs/APP-SETUP.md#7-owner-reviewed-app-grant-candidate-preflight).
@@ -77,10 +80,12 @@ global exactly-once claim or implicit uncertainty reset is made here.
 
 GNU timeout and the job deadline bound the hosted invocation. Private runner
 output is temporary, and no raw evidence directory or credential is uploaded.
-Only `app-grant-preflight` selects three safe advisory metadata files for
+Only `app-grant-preflight` selects four safe advisory metadata files for
 seven-day artifact retention. The pinned action attempts token revocation during
 post-job cleanup; verify its actual result. The candidate is not an installed
-configuration and cannot supply approval or a token for a later job.
+configuration and cannot supply approval or a token for a later job. The earlier
+five-permission preflight remains historical evidence for its original source
+and revoked token. The new source and permission require a fresh review and run.
 Select protected durable retention separately before a live merge trial. A
 successful check remains verification metadata; actual independent review,
 current native readiness and the separately approved finite merge packet are
