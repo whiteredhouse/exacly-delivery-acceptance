@@ -35,6 +35,46 @@ controlled tests do not establish authenticated App access or live merge accepta
 Do not copy a head result to M, create an arbitrary successful check, or allow
 candidate changes to approve their own verification meaning.
 
+## Native merge trial preparation
+
+The branch-only `create-canary` mode prepares one fixed data-only PR from the
+reviewed main commit. It changes only `canary.txt` to `canary=native-merge-001`.
+The workflow uses its ordinary `GITHUB_TOKEN` to publish the Git objects, create
+`canary/native-merge-001` and open the PR as `github-actions[bot]`. This separates
+the PR author from the human reviewer `p1c2u`. It receives no App key, cannot
+publish the required App check and performs no merge or protection change.
+
+This mode runs only from `codex/native-merge-trial`, with an empty PR input and
+the first workflow attempt. It never overwrites the fixed branch or retries an
+uncertain write. A later run may discover an existing exact PR but cannot use a
+new run or output path to reset a previous attempt's write allowance. Its sole
+artifact is `author-result.json`; the default repository token permissions stay
+read-only, with write permissions limited to this job.
+
+The first author run created the exact branch and reached a rejected PR request.
+The separately reviewed `finish-canary-pr` mode permits one additional PR-only
+attempt for that existing branch. It pins the original run and retained result,
+rechecks the full branch/tree/commit and complete run history, and receives only
+Contents read, Pull requests write and Actions read. Its supplemental limit is
+one PR call, recorded alongside the original four attempts. It cannot repeat
+source/ref writes, reset the original allowance or retry a previous completion
+attempt. An existing exact PR can be discovered without writes.
+
+PRs created with `GITHUB_TOKEN` can have ordinary PR workflows waiting for
+**Approve workflows to run**. Inspect the actual run and resume its reviewed
+read-only CI before treating head verification as complete. PR content approval
+and workflow execution approval are separate. See
+[GitHub's token documentation](https://docs.github.com/en/actions/concepts/security/github_token).
+
+The existing main-only `verify` mode must also be dispatched explicitly for the
+created PR. Its genuine verifier App runs the fixed tests and publishes the
+separately required check on exact M; ordinary head CI cannot replace that check.
+The human supplies an actual independent PR review.
+
+[The native trial runbook](docs/NATIVE-MERGE-TRIAL.md) describes the remaining
+runtime approval and persistent-host requirements. PR preparation and successful
+preflight do not grant native merge authority.
+
 ## Trusted manual App workflow
 
 [The account setup guide](docs/APP-SETUP.md) describes the selected App identities,
