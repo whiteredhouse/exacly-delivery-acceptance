@@ -1,5 +1,5 @@
 name: Trusted App bootstrap
-run-name: canary-bootstrap:${{ inputs.mode }}:pr-${{ inputs.mode == 'native-positive-trial' && '5' || (inputs.mode == 'verify' && inputs.pr_number || '0') }}
+run-name: canary-bootstrap:${{ inputs.mode }}:pr-${{ (inputs.mode == 'native-positive-trial' || inputs.mode == 'native-readiness-diagnostic') && '5' || (inputs.mode == 'verify' && inputs.pr_number || '0') }}
 
 # Main role environments and the separate owner-reviewed diagnostic environment
 # require their exact branch policies before storing keys. All runs are manual.
@@ -9,7 +9,7 @@ on:
       mode:
         description: App preflight, exact generated-merge verification or separately approved native trial
         type: choice
-        options: [preflight, verify, diagnose-merger, app-grant-preflight, native-positive-trial]
+        options: [preflight, verify, diagnose-merger, app-grant-preflight, native-positive-trial, native-readiness-diagnostic]
         default: preflight
         required: true
       pr_number:
@@ -26,6 +26,84 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-readiness-diagnostic:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/codex/preflight-diagnostics' && github.run_attempt == 1
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205' && github.actor_id == '1679024'
+          && inputs.mode == 'native-readiness-diagnostic' && inputs.pr_number == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    environment:
+      name: canary-merger-diagnostic
+      deployment: false
+    steps:
+      - name: Check out the owner-reviewed read-only diagnostic
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: diagnostic
+          persist-credentials: false
+      - name: Check out the exact native diagnostic implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: whiteredhouse/exacly
+          ref: 9ef4b0adc5f61310154544c636693123fd225737
+          path: exacly-readiness-runtime
+          persist-credentials: false
+      - name: Install fixed tools before minting
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          working_directory: exacly-readiness-runtime
+          install_args: python uv
+          persist_github_token: false
+      - name: Install locked dependencies before minting
+        run: uv sync --locked --project exacly-readiness-runtime --python 3.12
+      - name: Mint the one-repository App token for read-only inspection
+        id: diagnostic-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: '5572362'
+          private-key: ${{ secrets.MERGER_PRIVATE_KEY }}
+          owner: whiteredhouse
+          repositories: exacly-delivery-acceptance
+          github-api-url: https://api.github.com
+          permission-contents: write
+          permission-pull-requests: read
+          permission-checks: read
+          permission-administration: read
+          permission-metadata: read
+          permission-statuses: read
+          skip-token-revoke: false
+      - name: Inspect the fixed native readiness conditions once without effects
+        id: diagnostic
+        env:
+          CANARY_APP_TOKEN: ${{ steps.diagnostic-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.diagnostic-token.outputs.installation-id }}
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 180s \
+            uv run --no-sync --project exacly-readiness-runtime python -I -B diagnostic/tools/native_readiness_diagnostic.py \
+            --core-source "$GITHUB_WORKSPACE/exacly-readiness-runtime" \
+            --out "$RUNNER_TEMP/native-readiness-diagnostic-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain only the three advisory diagnostic files
+        if: ${{ always() && steps.diagnostic-token.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-readiness-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-readiness-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}/mint-attestation.json
+            ${{ runner.temp }}/native-readiness-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}/actor-candidate.json
+            ${{ runner.temp }}/native-readiness-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}/native-readiness-diagnostic.json
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false
+          if-no-files-found: error
+
   native-positive-trial:
     if: >-
       ${{ github.event_name == 'workflow_dispatch'

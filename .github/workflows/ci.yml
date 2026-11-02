@@ -35,6 +35,13 @@ jobs:
           working_directory: exacly-runtime
           install_args: python uv
           persist_github_token: false
+      - name: Install the separately pinned diagnostic runtime for read-only integration checks
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: whiteredhouse/exacly
+          ref: 9ef4b0adc5f61310154544c636693123fd225737
+          path: exacly-readiness-runtime
+          persist-credentials: false
       - name: Install locked test dependencies and tracing
         run: |
           sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 180s \
@@ -44,12 +51,14 @@ jobs:
             apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
             -o DPkg::Lock::Timeout=30 install --yes strace libseccomp2
           uv sync --locked --project exacly-runtime --python 3.12
+          uv sync --locked --project exacly-readiness-runtime --python 3.12
       - name: Record the checked-out revision
         run: git -C canary rev-parse HEAD
       - name: Verify the canary application
         working-directory: canary
         env:
           EXACLY_NATIVE_TRIAL_TEST_CORE: ${{ github.workspace }}/exacly-runtime
+          EXACLY_NATIVE_DIAGNOSTIC_TEST_CORE: ${{ github.workspace }}/exacly-readiness-runtime
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           "$GITHUB_WORKSPACE/exacly-runtime/.venv/bin/python" -B -m unittest discover -s tests -v
