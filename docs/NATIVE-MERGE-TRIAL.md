@@ -69,12 +69,42 @@ separate trusted verifier below remains necessary. Record the actual PR number,
 head `H`, provider-generated merge commit `M`, merge tree and ordered parents
 `[B,H]` after creation. Freeze this tuple; a source change requires a new decision.
 
+### Complete the existing branch's PR after the first refusal
+
+[Author run 41473383834](https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/41473383834),
+attempt 1 at source `860221a3aa537b415b6411f45c8755fb99fb11e8`, created the exact
+tree, commit and branch, then received a rejected PR response. Its four mutation
+attempts remain spent. Read-only reconciliation found exact head
+`7e5f04446bd7eb2bd69132f27e8d20c9a967a156` and no matching PR in any state.
+The original result did not retain HTTP status, so the rejection's cause is
+unconfirmed. The repository's Actions PR-creation setting needs owner inspection;
+the current connection cannot read that administration setting.
+
+The supplemental `finish-canary-pr` mode selects decision
+`canary-native-merge-001-finish-pr-v1` and permits one additional PR-only API
+attempt. Its job receives Contents read, Pull requests write and Actions read.
+It verifies the exact original failed run and retained artifact
+`13155927139` with archive digest
+`sha256:84cb592a85459ed660fed8694d460ab249eafa32f7a057c60b23875cf8d2da1c`,
+complete bounded author/completion history, current base/head and the full
+expected tree/commit before any PR creation. It cannot recreate Git objects,
+update/create a ref or repeat an earlier completion attempt. Existing exact PR
+discovery is read-only. Original four attempts and this supplemental ceiling of
+one remain separately recorded; this is preparation authority only.
+
+If disabled, enable **Settings → Actions → General → Workflow permissions →
+Allow GitHub Actions to create and approve pull requests**. Keep the default
+workflow token permissions read-only. The helper never submits a review.
+
 ## 2. Obtain genuine current verification and review
 
 Use the existing `verify` mode from `main`, with the actual decimal PR number.
 This selects the main-only `canary-verifier` environment and verifier App
-`5572341`, installation `177653019`. Approval must release its key for that actual
-frozen run. The fixed producer checks the data-only candidate against trusted
+`5572341`, installation `177653019`. Read back its exact main-only branch rule.
+Required environment reviewers are optional in the existing setup; if configured,
+the owner must approve that actual frozen run. Record the actual controls and do
+not invent an approval record for an environment without that gate. The fixed
+producer checks the data-only candidate against trusted
 main source, runs its actual seven business cases and rechecks provider identities
 before publishing at most one `exacly-generated-merge` result on exact `M`.
 

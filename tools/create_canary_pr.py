@@ -1,6 +1,8 @@
 """Prepare one fixed data-only canary PR with the ordinary workflow token.
 
-Four HTTP mutation attempts at most; no update, force push, retry or merge.
+Original preparation permits four HTTP mutation attempts. The separately reviewed
+supplemental mode permits one PR POST only, preserving the original accounting.
+Neither mode updates an existing ref, force pushes, retries a POST or merges.
 Git author text is deterministic metadata. Only GitHub's PR response establishes
 the actual bot author. Candidate code is never imported or executed.
 """
@@ -31,6 +33,14 @@ API = "https://api.github.com"
 PREFIX = "/repos/" + REPOSITORY["full_name"]
 WORKFLOW = ".github/workflows/app-bootstrap.yml"
 RUN_TITLE = "canary-bootstrap:create-canary:pr-0"
+FINISH_RUN_TITLE = "canary-bootstrap:finish-canary-pr:pr-0"
+# Separately reviewed supplemental PR preparation; this is not native merge
+# approval or a retrospective assertion about the original failure's HTTP cause.
+SUPPLEMENTAL_DECISION = "canary-native-merge-001-finish-pr-v1"
+ORIGINAL_RUN = 41473383834
+ORIGINAL_SOURCE = "860221a3aa537b415b6411f45c8755fb99fb11e8"
+ORIGINAL_ARTIFACT = 13155927139
+ORIGINAL_ARTIFACT_DIGEST = "sha256:84cb592a85459ed660fed8694d460ab249eafa32f7a057c60b23875cf8d2da1c"
 HISTORY = PREFIX + "/actions/workflows/app-bootstrap.yml/runs?event=workflow_dispatch&branch=codex%2Fnative-merge-trial&per_page=100"
 PULLS = PREFIX + "/pulls?state=all&head=whiteredhouse%3Acanary%2Fnative-merge-001&base=main&per_page=100"
 MAX_BYTES, MAX_CALLS, WORK_SECONDS = 1024 * 1024, 32, 75
@@ -169,26 +179,32 @@ class ResultFile:
 
 
 class Client:
-    def __init__(self, token, run_id, result, output, sender=None):
+    def __init__(self, token, run_id, result, output, sender=None, *, finish_pr=False):
         require(isinstance(token, str) and re.fullmatch(r"[A-Za-z0-9_.-]{20,1024}", token), "author_token_unavailable")
         self.token, self.run_id, self.result, self.output = token, run_id, result, output
         self.sender, self.deadline, self.calls, self.writes = sender or transport, time.monotonic() + WORK_SECONDS, 0, 0
         self.sent = set()
+        self.mutation_limit = 1 if finish_pr else 4
+        self.mutations = {PREFIX + "/pulls": MUTATIONS[PREFIX + "/pulls"]} if finish_pr else MUTATIONS
         self.reads = {PREFIX, PREFIX + "/git/ref/heads/main", PREFIX + "/git/ref/heads/" + BRANCH,
                       PREFIX + "/git/commits/" + BASE, PREFIX + "/git/commits/" + HEAD,
                       PREFIX + "/git/trees/" + BASE_TREE + "?recursive=1", PREFIX + "/git/trees/" + TREE + "?recursive=1",
                       PREFIX + "/actions/runs/" + str(run_id), HISTORY, PULLS}
+        if finish_pr:
+            self.reads.update((PREFIX + "/actions/runs/" + str(ORIGINAL_RUN), PREFIX + "/actions/artifacts/" + str(ORIGINAL_ARTIFACT)))
 
     def request(self, method, path, payload=None, *, missing=False):
-        mutation = method == "POST" and path in MUTATIONS and encoded(payload) == encoded(MUTATIONS[path])
+        mutation = method == "POST" and path in self.mutations and encoded(payload) == encoded(self.mutations[path])
         require(mutation or (method == "GET" and path in self.reads and payload is None), "request_outside_fixed_scope")
         require(self.calls < MAX_CALLS and time.monotonic() < self.deadline, "request_budget_exhausted")
         if mutation:
-            require(path not in self.sent and self.writes < 4, "mutation_retry_forbidden")
+            require(path not in self.sent and self.writes < self.mutation_limit, "mutation_retry_forbidden")
             self.sent.add(path)
             self.writes += 1
             self.result["intents"].append({"method": method, "path": path, "request": payload})
             self.result["provider_mutation_attempts"] = self.writes
+            if "supplemental_mutation_attempts" in self.result:
+                self.result["supplemental_mutation_attempts"] = self.writes
             self.output.save(self.result)
         self.calls += 1
         headers = {"Authorization": "Bearer " + self.token, "Accept": "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2026-03-10", "User-Agent": "exacly-canary-author"}
@@ -196,36 +212,67 @@ class Client:
         require(time.monotonic() < self.deadline, "request_budget_exhausted")
         if missing and method == "GET" and status == 404:
             return None
-        require(status == (201 if mutation else 200), "provider_request_rejected")
+        if status != (201 if mutation else 200):
+            if type(status) is int and status in (400, 401, 403, 404, 409, 410, 422, 429, 500, 502, 503, 504):
+                self.result["provider_failure_http_status"] = status
+            if status == 403 and mutation and path == PREFIX + "/pulls":
+                try:
+                    reason = decode(data)
+                except Exception:
+                    reason = None
+                if isinstance(reason, dict) and reason.get("message") == "GitHub Actions is not permitted to create or approve pull requests.":
+                    raise Stopped("actions_pr_creation_disabled")
+            raise Stopped("provider_request_rejected")
         return decode(data)
 
 
-def context():
+def context(*, finish_pr=False):
+    mode = "finish-canary-pr" if finish_pr else "create-canary"
     expected = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": REPOSITORY["full_name"],
                 "GITHUB_REPOSITORY_ID": str(REPOSITORY["id"]), "GITHUB_REF": "refs/heads/" + SOURCE_BRANCH,
                 "GITHUB_WORKFLOW_REF": REPOSITORY["full_name"] + "/" + WORKFLOW + "@refs/heads/" + SOURCE_BRANCH,
-                "GITHUB_JOB": "create-canary", "CANARY_MODE": "create-canary", "CANARY_PR_NUMBER": ""}
+                "GITHUB_JOB": mode, "CANARY_MODE": mode, "CANARY_PR_NUMBER": ""}
     require(all(os.environ.get(key) == value for key, value in expected.items()), "invalid_hosted_context")
     source, run, attempt = (os.environ.get(key, "") for key in ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"))
     require(re.fullmatch(r"[0-9a-f]{40}", source) and re.fullmatch(r"[1-9][0-9]*", run) and re.fullmatch(r"[1-9][0-9]*", attempt), "invalid_hosted_context")
     return source, int(run), int(attempt)
 
 
-def history_allows_creation(client, source, run_id, attempt):
+def history_allows_creation(client, source, run_id, attempt, *, finish_pr=False):
     run = client.request("GET", PREFIX + "/actions/runs/" + str(run_id))
     history = client.request("GET", HISTORY)
     def valid(item):
         return isinstance(item, dict) and type(item.get("id")) is int and type(item.get("run_number")) is int and type(item.get("run_attempt")) is int and item["run_attempt"] > 0 and item.get("repository", {}).get("id") == REPOSITORY["id"] and item["repository"].get("full_name") == REPOSITORY["full_name"] and item.get("path") == WORKFLOW and item.get("event") == "workflow_dispatch" and item.get("head_branch") == SOURCE_BRANCH and isinstance(item.get("head_sha"), str) and re.fullmatch(r"[0-9a-f]{40}", item["head_sha"]) and type(item.get("workflow_id")) is int and isinstance(item.get("display_title"), str)
-    require(valid(run) and run["id"] == run_id and run["head_sha"] == source and run["run_attempt"] == attempt and run["display_title"] == RUN_TITLE and run.get("status") == "in_progress", "hosted_history_unavailable")
+    title = FINISH_RUN_TITLE if finish_pr else RUN_TITLE
+    require(valid(run) and run["id"] == run_id and run["head_sha"] == source and run["run_attempt"] == attempt and run["display_title"] == title and run.get("status") == "in_progress", "hosted_history_unavailable")
     require(isinstance(history, dict) and isinstance(history.get("workflow_runs"), list) and type(history.get("total_count")) is int and history["total_count"] == len(history["workflow_runs"]) < 100, "hosted_history_unavailable")
     rows = history["workflow_runs"]
     require(all(valid(row) and row["workflow_id"] == run["workflow_id"] for row in rows) and len({row["id"] for row in rows}) == len(rows), "hosted_history_unavailable")
     current = [row for row in rows if row["id"] == run_id]
     require(len(current) == 1 and current[0]["head_sha"] == source and current[0]["run_attempt"] == attempt
-            and current[0]["run_number"] == run["run_number"] and current[0]["display_title"] == RUN_TITLE
+            and current[0]["run_number"] == run["run_number"] and current[0]["display_title"] == title
             and current[0].get("status") == "in_progress", "hosted_history_unavailable")
     prior = [row["id"] for row in rows if row["run_number"] < run["run_number"] and row["display_title"] == RUN_TITLE]
     client.result["prior_author_run_ids"] = prior
+    if finish_pr:
+        original = client.request("GET", PREFIX + "/actions/runs/" + str(ORIGINAL_RUN))
+        def original_matches(item):
+            return valid(item) and item["id"] == ORIGINAL_RUN and item["head_sha"] == ORIGINAL_SOURCE and item["run_attempt"] == 1 and item["run_number"] == 5 and item["display_title"] == RUN_TITLE and item.get("status") == "completed" and item.get("conclusion") == "failure" and item["workflow_id"] == run["workflow_id"]
+        create_rows = [row for row in rows if row["display_title"] == RUN_TITLE]
+        require(original_matches(original) and len(create_rows) == 1 and original_matches(create_rows[0])
+                and prior == [ORIGINAL_RUN], "supplemental_original_history_unavailable")
+        artifact = client.request("GET", PREFIX + "/actions/artifacts/" + str(ORIGINAL_ARTIFACT))
+        selected = artifact.get("workflow_run", {}) if isinstance(artifact, dict) else {}
+        require(isinstance(artifact, dict) and artifact.get("id") == ORIGINAL_ARTIFACT
+                and artifact.get("name") == "create-canary-41473383834-1" and artifact.get("expired") is False
+                and artifact.get("digest") == ORIGINAL_ARTIFACT_DIGEST
+                and selected.get("id") == ORIGINAL_RUN and selected.get("head_sha") == ORIGINAL_SOURCE
+                and selected.get("repository_id") == selected.get("head_repository_id") == REPOSITORY["id"]
+                and selected.get("head_branch") == SOURCE_BRANCH, "supplemental_original_artifact_unavailable")
+        prior_finish = [row["id"] for row in rows if row["run_number"] < run["run_number"] and row["display_title"] == FINISH_RUN_TITLE]
+        client.result["prior_finish_run_ids"] = prior_finish
+        client.result["supplemental_slot_previously_consumed_or_uncertain"] = bool(prior_finish)
+        return attempt == 1 and not prior_finish
     return attempt == 1 and not prior
 
 
@@ -260,18 +307,25 @@ def check_pr(value):
     require(value.get("title") == TITLE and value.get("body") == PR_BODY and value.get("html_url") == "https://github.com/" + REPOSITORY["full_name"] + "/pull/" + str(value["number"]), "unexpected_pr")
 
 
-def prepare(out, sender=None):
+def prepare(out, sender=None, *, finish_pr=False):
     result = {"kind": "exacly-fixed-canary-author", "status": "failed", "stage": "context", "expected_base": BASE,
               "expected_head": HEAD, "expected_tree": TREE, "head_ref": "refs/heads/" + BRANCH, "canary_content": CANARY,
               "provider_mutation_attempts": 0, "intents": [], "automatic_retry": False, "native_merge_authority": False, "independent_review_verified": False}
+    if finish_pr:
+        result.update(kind="exacly-fixed-canary-supplemental-pr", supplemental_preparation_decision=SUPPLEMENTAL_DECISION,
+                      original_run_id=ORIGINAL_RUN, original_source_commit=ORIGINAL_SOURCE,
+                      original_artifact_id=ORIGINAL_ARTIFACT, original_artifact_digest=ORIGINAL_ARTIFACT_DIGEST,
+                      original_failure_http_status_retained=False, original_pr_post_outcome="unconfirmed", original_mutation_attempts=4,
+                      supplemental_mutation_limit=1, supplemental_mutation_attempts=0,
+                      aggregate_bootstrap_mutation_limit=5)
     output, client = None, None
     try:
         output = ResultFile(out)
         output.save(result)
-        source, run_id, attempt = context()
+        source, run_id, attempt = context(finish_pr=finish_pr)
         result.update(source_commit=source, run_id=run_id, run_attempt=attempt)
-        client = Client(os.environ.get("CANARY_AUTHOR_TOKEN"), run_id, result, output, sender)
-        allowed = history_allows_creation(client, source, run_id, attempt)
+        client = Client(os.environ.get("CANARY_AUTHOR_TOKEN"), run_id, result, output, sender, finish_pr=finish_pr)
+        allowed = history_allows_creation(client, source, run_id, attempt, finish_pr=finish_pr)
         repo = client.request("GET", PREFIX)
         require(all(repo.get(key) == value for key, value in REPOSITORY.items()) and repo.get("default_branch") == "main" and all(repo.get(key) is False for key in ("private", "archived", "disabled")), "unexpected_repository")
         def main_matches():
@@ -285,6 +339,11 @@ def prepare(out, sender=None):
         prs = client.request("GET", PULLS)
         require(isinstance(prs, list) and len(prs) < 100, "ambiguous_existing_pr")
         result["stage"] = "discovery"
+        if finish_pr:
+            require(head is not None, "supplemental_existing_head_unavailable")
+            check_ref(head)
+            check_commit(client.request("GET", PREFIX + "/git/commits/" + HEAD))
+            check_tree(client.request("GET", PREFIX + "/git/trees/" + TREE + "?recursive=1"), TREE, INVENTORY)
         if prs:
             require(len(prs) == 1 and head is not None, "ambiguous_existing_pr")
             number = prs[0].get("number")
@@ -294,21 +353,25 @@ def prepare(out, sender=None):
             pr = client.request("GET", path)
             check_pr(pr)
             check_ref(head)
-            check_commit(client.request("GET", PREFIX + "/git/commits/" + HEAD))
-            check_tree(client.request("GET", PREFIX + "/git/trees/" + TREE + "?recursive=1"), TREE, INVENTORY)
+            if not finish_pr:
+                check_commit(client.request("GET", PREFIX + "/git/commits/" + HEAD))
+                check_tree(client.request("GET", PREFIX + "/git/trees/" + TREE + "?recursive=1"), TREE, INVENTORY)
             result["status"] = "discovered"
         else:
-            require(head is None, "existing_head_requires_reconciliation")
-            require(allowed, "prior_author_attempt_requires_reconciliation")
-            result["stage"] = "tree"
-            created = client.request("POST", PREFIX + "/git/trees", MUTATIONS[PREFIX + "/git/trees"])
-            require(created.get("sha") == TREE, "unexpected_tree")
-            check_tree(client.request("GET", PREFIX + "/git/trees/" + TREE + "?recursive=1"), TREE, INVENTORY)
-            result["stage"] = "commit"
-            check_commit(client.request("POST", PREFIX + "/git/commits", MUTATIONS[PREFIX + "/git/commits"]))
-            main_matches()
-            result["stage"] = "branch"
-            check_ref(client.request("POST", PREFIX + "/git/refs", MUTATIONS[PREFIX + "/git/refs"]))
+            if finish_pr:
+                require(allowed, "supplemental_attempt_requires_reconciliation")
+            else:
+                require(head is None, "existing_head_requires_reconciliation")
+                require(allowed, "prior_author_attempt_requires_reconciliation")
+                result["stage"] = "tree"
+                created = client.request("POST", PREFIX + "/git/trees", MUTATIONS[PREFIX + "/git/trees"])
+                require(created.get("sha") == TREE, "unexpected_tree")
+                check_tree(client.request("GET", PREFIX + "/git/trees/" + TREE + "?recursive=1"), TREE, INVENTORY)
+                result["stage"] = "commit"
+                check_commit(client.request("POST", PREFIX + "/git/commits", MUTATIONS[PREFIX + "/git/commits"]))
+                main_matches()
+                result["stage"] = "branch"
+                check_ref(client.request("POST", PREFIX + "/git/refs", MUTATIONS[PREFIX + "/git/refs"]))
             main_matches()
             check_ref(client.request("GET", PREFIX + "/git/ref/heads/" + BRANCH))
             result["stage"] = "pr"
@@ -327,6 +390,8 @@ def prepare(out, sender=None):
     finally:
         result["provider_requests"] = client.calls if client else 0
         result["provider_mutation_attempts"] = client.writes if client else 0
+        if finish_pr:
+            result["supplemental_mutation_attempts"] = result["provider_mutation_attempts"]
         result["possible_provider_effect"] = result["provider_mutation_attempts"] > 0
         if output is not None:
             try:
@@ -339,7 +404,9 @@ def prepare(out, sender=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    result = prepare(parser.parse_args().out)
+    parser.add_argument("--finish-pr", action="store_true", help="Use the separately reviewed, one-shot PR-only supplemental preparation decision")
+    arguments = parser.parse_args()
+    result = prepare(arguments.out, finish_pr=arguments.finish_pr)
     print(json.dumps(result, sort_keys=True))
     return 0 if result["status"] in ("created", "discovered") else 1
 

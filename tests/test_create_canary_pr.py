@@ -44,6 +44,8 @@ class Backend:
                    "base": {"ref": "main", "sha": author.BASE, "repo": copy.deepcopy(author.REPOSITORY)},
                    "head": {"ref": author.BRANCH, "sha": author.HEAD, "repo": copy.deepcopy(author.REPOSITORY)}}
         self.output, self.override = None, None
+        self.original = None
+        self.artifact = None
 
     @staticmethod
     def tree(oid):
@@ -61,6 +63,9 @@ class Backend:
             saved = json.loads((self.output / "author-result.json").read_text())
             assert saved["intents"][-1] == {"method": method, "path": path, "request": payload}
             assert saved["provider_mutation_attempts"] == len(self.posts) + 1
+            if "supplemental_mutation_limit" in saved:
+                assert saved["original_mutation_attempts"] == 4
+                assert saved["supplemental_mutation_limit"] == saved["supplemental_mutation_attempts"] == 1
             assert self.output.stat().st_mode & 0o777 == 0o700
             assert (self.output / "author-result.json").stat().st_mode & 0o777 == 0o600
             self.posts.append(path)
@@ -74,6 +79,10 @@ class Backend:
             value = self.run
         elif path == author.HISTORY:
             value = {"total_count": len(self.history) if self.count is None else self.count, "workflow_runs": self.history}
+        elif path == author.PREFIX + "/actions/runs/" + str(author.ORIGINAL_RUN):
+            value = self.original
+        elif path == author.PREFIX + "/actions/artifacts/" + str(author.ORIGINAL_ARTIFACT):
+            value = self.artifact
         elif path == author.PREFIX + "/git/ref/heads/main":
             value = self.main
         elif path == author.PREFIX + "/git/commits/" + author.BASE:
@@ -111,15 +120,30 @@ class Backend:
     def prior(self, conclusion="failure"):
         self.history.append({**copy.deepcopy(self.run), "id": 900, "run_number": 4, "status": "completed", "conclusion": conclusion})
 
+    def supplemental(self):
+        self.run.update(run_number=6, display_title=author.FINISH_RUN_TITLE)
+        self.original = {**copy.deepcopy(self.run), "id":author.ORIGINAL_RUN, "head_sha":author.ORIGINAL_SOURCE,
+                         "run_number":5, "run_attempt":1, "display_title":author.RUN_TITLE,
+                         "status":"completed", "conclusion":"failure"}
+        self.history = [copy.deepcopy(self.run), copy.deepcopy(self.original)]
+        self.artifact = {"id":author.ORIGINAL_ARTIFACT, "name":"create-canary-41473383834-1", "expired":False,
+                         "digest":author.ORIGINAL_ARTIFACT_DIGEST,
+                         "workflow_run":{"id":author.ORIGINAL_RUN,"head_sha":author.ORIGINAL_SOURCE,
+                                         "repository_id":author.REPOSITORY["id"],"head_repository_id":author.REPOSITORY["id"],
+                                         "head_branch":author.SOURCE_BRANCH}}
+        self.head = {"ref":"refs/heads/"+author.BRANCH,"object":{"sha":author.HEAD,"type":"commit"}}
+
 
 class CreateCanaryTests(unittest.TestCase):
-    def prepare(self, backend, changes=None, env=None):
+    def prepare(self, backend, changes=None, env=None, *, finish_pr=False):
         with tempfile.TemporaryDirectory(prefix="fixed-author-test-") as folder:
             backend.output = Path(folder) / "result"
             context = environment()
+            if finish_pr:
+                context.update(CANARY_MODE="finish-canary-pr", GITHUB_JOB="finish-canary-pr")
             context.update(changes or {})
             with patch.object(author.os, "environ", env if env is not None else context):
-                result = author.prepare(backend.output, backend.sender)
+                result = author.prepare(backend.output, backend.sender, finish_pr=finish_pr)
             persisted = json.loads((backend.output / "author-result.json").read_text())
             self.assertEqual(result, persisted)
             self.assertEqual(sorted(p.name for p in backend.output.iterdir()), ["author-result.json"])
@@ -356,6 +380,130 @@ class CreateCanaryTests(unittest.TestCase):
             for method, path, payload in (("PATCH",author.PREFIX+"/git/refs",{}), ("POST",author.PREFIX+"/git/refs",{"ref":"refs/heads/main","sha":author.HEAD}), ("GET","/user",None)):
                 with self.assertRaises(author.Stopped): client.request(method,path,payload)
             with self.assertRaises(author.Stopped): client.request("GET",author.PREFIX)
+
+    def test_supplemental_creates_only_pr_and_preserves_original_accounting(self):
+        backend = Backend()
+        backend.supplemental()
+        result = self.prepare(backend, finish_pr=True)
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(backend.posts, [author.PREFIX + "/pulls"])
+        self.assertEqual(result["original_mutation_attempts"], 4)
+        self.assertEqual(result["supplemental_mutation_limit"], 1)
+        self.assertEqual(result["aggregate_bootstrap_mutation_limit"], 5)
+        self.assertEqual(result["supplemental_mutation_attempts"], 1)
+        self.assertEqual(result["provider_mutation_attempts"], 1)
+        self.assertEqual(result["supplemental_preparation_decision"], author.SUPPLEMENTAL_DECISION)
+        self.assertEqual(result["original_pr_post_outcome"], "unconfirmed")
+        self.assertFalse(result["original_failure_http_status_retained"])
+        self.assertFalse(result["native_merge_authority"])
+        paths = [path for method, path, _ in backend.calls if method == "GET"]
+        self.assertIn(author.PREFIX + "/git/commits/" + author.HEAD, paths)
+        self.assertIn(author.PREFIX + "/git/trees/" + author.TREE + "?recursive=1", paths)
+
+    def test_supplemental_client_itself_forbids_all_source_and_ref_mutations(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as folder:
+            out = author.ResultFile(Path(folder)/"out")
+            client = author.Client(TOKEN,901,{"intents":[]},out,sender=lambda *args: calls.append(args),finish_pr=True)
+            for path, payload in author.MUTATIONS.items():
+                if path != author.PREFIX + "/pulls":
+                    with self.assertRaises(author.Stopped): client.request("POST", path, payload)
+            self.assertEqual(calls, [])
+            self.assertEqual(client.mutation_limit, 1)
+            self.assertEqual(set(client.mutations), {author.PREFIX + "/pulls"})
+
+    def test_supplemental_original_run_and_artifact_must_match_reviewed_history(self):
+        for kind in ("source", "attempt", "conclusion", "number", "missing", "extra-create", "artifact", "artifact-source", "artifact-repo", "expired"):
+            with self.subTest(kind=kind):
+                backend = Backend()
+                backend.supplemental()
+                if kind == "source": backend.original["head_sha"] = "f"*40
+                elif kind == "attempt": backend.original["run_attempt"] = 2
+                elif kind == "conclusion": backend.original["conclusion"] = "success"
+                elif kind == "number": backend.original["run_number"] = 4
+                elif kind == "missing": backend.history.pop()
+                elif kind == "extra-create": backend.history.append({**copy.deepcopy(backend.original),"id":899,"run_number":4})
+                elif kind == "artifact": backend.artifact["digest"] = "sha256:" + "f"*64
+                elif kind == "artifact-source": backend.artifact["workflow_run"]["head_sha"] = "f"*40
+                elif kind == "artifact-repo": backend.artifact["workflow_run"]["head_repository_id"] = 7
+                else: backend.artifact["expired"] = True
+                self.assertEqual(self.prepare(backend,finish_pr=True)["status"], "failed")
+                self.assertEqual(backend.posts, [])
+
+    def test_supplemental_prior_finish_or_rerun_can_only_discover_existing_pr(self):
+        for previous in ("prior-failure", "prior-success", "rerun"):
+            for existing in (False, True):
+                with self.subTest(previous=previous,existing=existing):
+                    backend = Backend()
+                    backend.supplemental()
+                    changes = None
+                    if previous == "rerun":
+                        backend.run["run_attempt"] = backend.history[0]["run_attempt"] = 2
+                        changes = {"GITHUB_RUN_ATTEMPT":"2"}
+                    else:
+                        backend.run["run_number"] = backend.history[0]["run_number"] = 7
+                        backend.history.append({**copy.deepcopy(backend.run),"id":900,"run_number":6,"status":"completed","conclusion":"failure" if previous=="prior-failure" else "success"})
+                    if existing: backend.existing()
+                    result = self.prepare(backend,changes,finish_pr=True)
+                    self.assertEqual(result["status"], "discovered" if existing else "failed")
+                    self.assertEqual(backend.posts, [])
+                    self.assertEqual(result["original_mutation_attempts"], 4)
+                    self.assertEqual(result["supplemental_mutation_attempts"], 0)
+
+    def test_supplemental_missing_or_changed_objects_refuse_pr_post(self):
+        for kind in ("main", "missing-head", "head", "tree", "parent", "duplicate-pr"):
+            backend = Backend()
+            backend.supplemental()
+            if kind == "main": backend.main["object"]["sha"] = "f"*40
+            elif kind == "missing-head": backend.head = None
+            elif kind == "head": backend.head["object"]["sha"] = "f"*40
+            elif kind == "parent": backend.commit["parents"] = [{"sha":"f"*40}]
+            elif kind == "duplicate-pr":
+                backend.existing()
+                backend.prs *= 2
+            else:
+                wrong = backend.tree(author.TREE)
+                wrong["tree"][0]["sha"] = "f"*40
+                backend.override = lambda method,path,payload: (200,author.encoded(wrong)) if path.endswith(author.TREE+"?recursive=1") else None
+            self.assertEqual(self.prepare(backend,finish_pr=True)["status"], "failed")
+            self.assertEqual(backend.posts, [])
+
+    def test_supplemental_uncertain_post_is_not_retried_and_keeps_five_call_limit(self):
+        backend = Backend()
+        backend.supplemental()
+        def fail(method,path,payload):
+            if method == "POST": raise urllib.error.URLError("lost reply " + TOKEN)
+        backend.override = fail
+        result = self.prepare(backend,finish_pr=True)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(backend.posts, [author.PREFIX+"/pulls"])
+        self.assertEqual(result["original_mutation_attempts"],4)
+        self.assertEqual(result["supplemental_mutation_attempts"],1)
+        self.assertEqual(result["aggregate_bootstrap_mutation_limit"],5)
+        self.assertNotIn(TOKEN,json.dumps(result))
+
+    def test_provider_status_is_whitelisted_and_known_disabled_reason_is_fixed(self):
+        for finish_pr in (False,True):
+            for status,message,expected_code in ((403,"GitHub Actions is not permitted to create or approve pull requests.","actions_pr_creation_disabled"),
+                                                 (403,TOKEN,"provider_request_rejected"),
+                                                 (422,TOKEN,"provider_request_rejected"),
+                                                 (599,TOKEN,"provider_request_rejected")):
+                with self.subTest(finish_pr=finish_pr,status=status,message=message):
+                    backend = Backend()
+                    if finish_pr: backend.supplemental()
+                    backend.override = lambda method,path,payload: (status,author.encoded({"message":message})) if method=="POST" and path==author.PREFIX+"/pulls" else None
+                    result = self.prepare(backend,finish_pr=finish_pr)
+                    self.assertEqual(result["error_code"],expected_code)
+                    if status==599: self.assertNotIn("provider_failure_http_status",result)
+                    else: self.assertEqual(result["provider_failure_http_status"],status)
+                    self.assertNotIn(TOKEN,json.dumps(result))
+
+    def test_finish_mode_cannot_run_in_original_job_context(self):
+        backend = Backend()
+        backend.supplemental()
+        result = self.prepare(backend,{"GITHUB_JOB":"create-canary"},finish_pr=True)
+        self.assertEqual(result["error_code"],"invalid_hosted_context")
+        self.assertEqual(backend.calls,[])
 
 
 if __name__ == "__main__":

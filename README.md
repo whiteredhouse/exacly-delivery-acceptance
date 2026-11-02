@@ -51,6 +51,15 @@ new run or output path to reset a previous attempt's write allowance. Its sole
 artifact is `author-result.json`; the default repository token permissions stay
 read-only, with write permissions limited to this job.
 
+The first author run created the exact branch and reached a rejected PR request.
+The separately reviewed `finish-canary-pr` mode permits one additional PR-only
+attempt for that existing branch. It pins the original run and retained result,
+rechecks the full branch/tree/commit and complete run history, and receives only
+Contents read, Pull requests write and Actions read. Its supplemental limit is
+one PR call, recorded alongside the original four attempts. It cannot repeat
+source/ref writes, reset the original allowance or retry a previous completion
+attempt. An existing exact PR can be discovered without writes.
+
 PRs created with `GITHUB_TOKEN` do not trigger ordinary PR workflows. The
 existing main-only `verify` mode must therefore be dispatched explicitly for
 the created PR. The genuine verifier App then runs the fixed tests and publishes

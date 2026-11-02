@@ -9,7 +9,7 @@ on:
       mode:
         description: Fixed canary PR preparation, App preflight or exact generated-merge verification
         type: choice
-        options: [preflight, verify, diagnose-merger, app-grant-preflight, create-canary]
+        options: [preflight, verify, diagnose-merger, app-grant-preflight, create-canary, finish-canary-pr]
         default: preflight
         required: true
       pr_number:
@@ -26,6 +26,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  finish-canary-pr:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/codex/native-merge-trial' && github.run_attempt == 1
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205'
+          && inputs.mode == 'finish-canary-pr' && inputs.pr_number == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Check out the reviewed PR-only completion helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Complete or discover the PR for the existing exact canary branch
+        id: author
+        env:
+          CANARY_AUTHOR_TOKEN: ${{ github.token }}
+          CANARY_MODE: ${{ inputs.mode }}
+          CANARY_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            python3 -I -B tools/create_canary_pr.py --finish-pr \
+            --out "$RUNNER_TEMP/finish-canary-pr-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain only the safe PR completion result
+        if: >-
+          ${{ always() && (steps.author.outcome == 'success' || steps.author.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: finish-canary-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/finish-canary-pr-${{ github.run_id }}-${{ github.run_attempt }}/author-result.json
+          retention-days: 7
+          include-hidden-files: false
+          overwrite: false
+          if-no-files-found: error
+
   create-canary:
     if: >-
       ${{ github.event_name == 'workflow_dispatch'
