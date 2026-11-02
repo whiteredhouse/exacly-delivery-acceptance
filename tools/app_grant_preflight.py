@@ -29,6 +29,7 @@ NATIVE_PINS = {
 ACTION = "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
 WORKFLOW_REF = REPOSITORY["full_name"] + "/.github/workflows/app-bootstrap.yml@refs/heads/codex/preflight-diagnostics"
 API = "https://api.github.com"
+API_VERSION = "2026-03-10"
 PREFIX = "/repos/" + REPOSITORY["full_name"]
 PERMISSIONS = {"contents": "write", "pull_requests": "read", "checks": "read", "administration": "read", "metadata": "read"}
 READS = (PREFIX, "/installation/repositories?per_page=100", PREFIX + "/git/ref/heads/main",
@@ -87,7 +88,7 @@ def build_mint_attestation(token, installation_id, now):
         "workflow_source_commit": source, "exacly_source_commit": CORE_REVISION,
         "run_id": int(run), "run_attempt": 1,
         "run_url": "https://github.com/" + REPOSITORY["full_name"] + "/actions/runs/" + run,
-        "job": "app-grant-preflight", "mint_action": ACTION,
+        "job": "app-grant-preflight", "mint_action": ACTION, "fact_read_api_version": API_VERSION,
         "app_id": APP_ID, "installation_id": installation_id,
         "requested_repository_ids": [REPOSITORY["id"]], "requested_permissions": dict(PERMISSIONS),
         "token_digest": "sha256:" + hashlib.sha256(token.encode()).hexdigest(),
@@ -110,6 +111,7 @@ def build_candidate(attestation, now):
             and attestation["local_use_lease_seconds"] == LEASE_SECONDS)
     require(attestation.get("workflow_ref") == WORKFLOW_REF and attestation.get("mint_action") == ACTION
             and attestation.get("exacly_source_commit") == CORE_REVISION)
+    require(attestation.get("fact_read_api_version") == API_VERSION)
     require(type(attestation.get("run_id")) is int and attestation["run_id"] > 0
             and type(attestation.get("run_attempt")) is int and attestation["run_attempt"] == 1
             and attestation.get("job") == "app-grant-preflight")
@@ -193,7 +195,7 @@ class FixedReads:
         self.native.validate_installation_grant_time(self.candidate, now=self.clock())
         self.seen.add(path)
         headers = {"Authorization": "Bearer " + self.token, "Accept": "application/vnd.github+json",
-                   "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "exacly-app-grant-preflight"}
+                   "X-GitHub-Api-Version": API_VERSION, "User-Agent": "exacly-app-grant-preflight"}
         status, body = self.sender("GET", API + path, headers, None, min(10, self.deadline - time.monotonic()))
         require(status == 200 and isinstance(body, bytes) and len(body) <= MAX_RESPONSE and time.monotonic() < self.deadline)
         return json.loads(body, object_pairs_hook=unique_object,

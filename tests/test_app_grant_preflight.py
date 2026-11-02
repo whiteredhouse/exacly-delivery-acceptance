@@ -196,6 +196,7 @@ class AppGrantPreflightTests(unittest.TestCase):
             ('local_use_lease_seconds', 3601), ('local_use_lease_seconds', True),
             ('workflow_ref', 'other/repository/.github/workflows/other.yml@refs/heads/main'),
             ('mint_action', 'actions/create-github-app-token@' + '0' * 40),
+            ('fact_read_api_version', '2022-11-28'),
             ('exacly_source_commit', '0' * 40), ('token_digest', TOKEN),
             ('provider_mint_response_retained', True), ('provider_expiry_verified', True),
             ('independent_mint_approval', True), ('merge_authority', True),
@@ -247,6 +248,20 @@ class AppGrantPreflightTests(unittest.TestCase):
         self.assertEqual({path.name for path in self.out.iterdir()}, {'mint-attestation.json', 'actor-candidate.json', 'preflight.json'})
         self.assertEqual(stat.S_IMODE(self.out.stat().st_mode), 0o700)
         self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in self.out.iterdir()))
+
+    def test_fact_reads_and_attestation_use_the_pinned_native_api_version(self):
+        headers_seen = []
+        original = self.backend.sender
+        def capture(method, url, headers, payload, timeout):
+            headers_seen.append(headers.get('X-GitHub-Api-Version'))
+            return original(method, url, headers, payload, timeout)
+        self.backend.sender = capture
+        result = self.run_preflight()
+        self.assertTrue(result['credential_and_protection_candidate_checks_passed'])
+        # Native github_merge.py at the pinned source uses this exact protocol.
+        self.assertEqual(headers_seen, ['2026-03-10'] * 6)
+        attestation = json.loads((self.out / 'mint-attestation.json').read_text())
+        self.assertEqual(attestation['fact_read_api_version'], '2026-03-10')
 
     def test_raw_false_and_unknown_roles_are_not_replaced_by_push_authority(self):
         self.backend.repository['permissions'] = {'admin': False}
