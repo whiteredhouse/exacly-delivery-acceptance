@@ -60,10 +60,16 @@ one PR call, recorded alongside the original four attempts. It cannot repeat
 source/ref writes, reset the original allowance or retry a previous completion
 attempt. An existing exact PR can be discovered without writes.
 
-PRs created with `GITHUB_TOKEN` do not trigger ordinary PR workflows. The
-existing main-only `verify` mode must therefore be dispatched explicitly for
-the created PR. The genuine verifier App then runs the fixed tests and publishes
-its check on exact M; the human supplies an actual independent review.
+PRs created with `GITHUB_TOKEN` can have ordinary PR workflows waiting for
+**Approve workflows to run**. Inspect the actual run and resume its reviewed
+read-only CI before treating head verification as complete. PR content approval
+and workflow execution approval are separate. See
+[GitHub's token documentation](https://docs.github.com/en/actions/concepts/security/github_token).
+
+The existing main-only `verify` mode must also be dispatched explicitly for the
+created PR. Its genuine verifier App runs the fixed tests and publishes the
+separately required check on exact M; ordinary head CI cannot replace that check.
+The human supplies an actual independent PR review.
 
 [The native trial runbook](docs/NATIVE-MERGE-TRIAL.md) describes the remaining
 runtime approval and persistent-host requirements. PR preparation and successful

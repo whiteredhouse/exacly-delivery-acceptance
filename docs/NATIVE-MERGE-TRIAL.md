@@ -64,8 +64,14 @@ author and latest pusher are the intended GitHub Actions identity so that
 `p1c2u` can supply an independent review. A PR authored by `p1c2u` through the
 current connection cannot acquire that same user's independent author review.
 
-Actions-created PRs may not trigger ordinary PR workflows automatically. The
-separate trusted verifier below remains necessary. Record the actual PR number,
+Bot-created PRs can have ordinary PR workflows waiting for **Approve workflows
+to run**. Inspect the actual Actions history: an `action_required` run is pending
+workflow approval, not evidence that no workflow was created. Review and resume
+the unchanged read-only CI using authorized Actions access, then require its real
+result on the selected head. A PR's content review is a separate control. See
+[GitHub's token documentation](https://docs.github.com/en/actions/concepts/security/github_token).
+
+The separate trusted verifier below remains necessary. Record the actual PR number,
 head `H`, provider-generated merge commit `M`, merge tree and ordered parents
 `[B,H]` after creation. Freeze this tuple; a source change requires a new decision.
 
@@ -112,6 +118,11 @@ Read back the real check's producing App, commit, status and conclusion. Require
 literal success from App `5572341` on selected `M`. Ordinary `canary-tests` has a
 different producer and is not a substitute or a second required head-only check.
 Do not copy a head result onto `M` or publish an arbitrary successful check.
+
+If the required M check passes but GitHub still reports `UNSTABLE`, inspect the
+ordinary head CI and its approval state. Preserve the native `CLEAN` requirement
+and read back the aggregate state after the real CI completes; a missing check
+run alone does not establish a failed test or prove the reason for that state.
 
 `p1c2u` must review the real PR independently after its latest reviewable push.
 Retain the actual approval and current GitHub review decision. Existing classic
