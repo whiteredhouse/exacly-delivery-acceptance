@@ -16,13 +16,40 @@ jobs:
   canary-tests:
     name: canary-tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+          path: canary
+      - name: Install the pinned native runtime for real integration checks
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: whiteredhouse/exacly
+          ref: 9a5cd90b8d3c3b2acc2a00e7e68e175558025432
+          path: exacly-runtime
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          working_directory: exacly-runtime
+          install_args: python uv
+          persist_github_token: false
+      - name: Install locked test dependencies and tracing
+        run: |
+          sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 180s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=30 update
+          sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 180s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=30 install --yes strace libseccomp2
+          uv sync --locked --project exacly-runtime --python 3.12
       - name: Record the checked-out revision
-        run: git rev-parse HEAD
+        run: git -C canary rev-parse HEAD
       - name: Verify the canary application
-        run: python3 -B -m unittest discover -s tests -v
+        working-directory: canary
+        env:
+          EXACLY_NATIVE_TRIAL_TEST_CORE: ${{ github.workspace }}/exacly-runtime
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          "$GITHUB_WORKSPACE/exacly-runtime/.venv/bin/python" -B -m unittest discover -s tests -v
