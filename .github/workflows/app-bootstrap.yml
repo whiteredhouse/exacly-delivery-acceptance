@@ -1,15 +1,15 @@
 name: Trusted App bootstrap
 run-name: canary-bootstrap:${{ inputs.mode }}:pr-${{ inputs.mode == 'verify' && inputs.pr_number || '0' }}
 
-# Environment branch policies and protected main are required before storing keys.
-# This workflow never runs automatically or checks out candidate code.
+# Main role environments and the separate owner-reviewed diagnostic environment
+# require their exact branch policies before storing keys. All runs are manual.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Read-only App preflight or exact generated-merge verification
+        description: Read-only App preflight, merger diagnostic or exact generated-merge verification
         type: choice
-        options: [preflight, verify]
+        options: [preflight, verify, diagnose-merger]
         default: preflight
         required: true
       pr_number:
@@ -26,6 +26,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  merger-diagnostic:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/codex/preflight-diagnostics' && github.run_attempt == 1
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205'
+          && inputs.mode == 'diagnose-merger' && inputs.pr_number == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    environment:
+      name: canary-merger-diagnostic
+      deployment: false
+    steps:
+      - name: Check out the owner-reviewed diagnostic workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: diagnostic
+          persist-credentials: false
+      - name: Check out the original reviewed preflight source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8
+          path: trusted-source
+          persist-credentials: false
+      - name: Mint the existing one-repository merger token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: '5572362'
+          private-key: ${{ secrets.MERGER_PRIVATE_KEY }}
+          owner: whiteredhouse
+          repositories: exacly-delivery-acceptance
+          github-api-url: https://api.github.com
+          permission-contents: write
+          permission-pull-requests: read
+          permission-checks: read
+          permission-administration: read
+          permission-metadata: read
+          skip-token-revoke: false
+      - name: Diagnose the original read-only merger preflight
+        env:
+          CANARY_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            python3 -I -B diagnostic/tools/hosted_merger_diagnostic.py \
+            --trusted-source "$GITHUB_WORKSPACE/trusted-source" \
+            --out "$RUNNER_TEMP/canary-merger-diagnostic-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
   verifier-preflight:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
