@@ -51,4 +51,5 @@ jobs:
         env:
           EXACLY_NATIVE_TRIAL_TEST_CORE: ${{ github.workspace }}/exacly-runtime
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-        run: ../exacly-runtime/.venv/bin/python -B -m unittest discover -s tests -v
+        run: |
+          "$GITHUB_WORKSPACE/exacly-runtime/.venv/bin/python" -B -m unittest discover -s tests -v
