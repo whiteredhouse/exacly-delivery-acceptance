@@ -13,7 +13,7 @@ permissions and endpoint access still require authenticated preflight. Registeri
 an App, installing it or adding its key does not create Exacly runtime authority.
 
 The manual workflow's main modes use trusted main source and the fixed helper
-`tools/app_bootstrap.py`. Two separately gated branch modes reproduce the legacy
+`tools/app_bootstrap.py`. Two separately gated branch preflight modes reproduce the legacy
 actor diagnostic or collect advisory App-grant and protection evidence:
 
 | Mode | Selected branch | Result |
@@ -22,6 +22,7 @@ actor diagnostic or collect advisory App-grant and protection evidence:
 | `verify` | `main` | At most one genuine `exacly-generated-merge` check for a bounded canary PR |
 | `diagnose-merger` | `codex/preflight-diagnostics` | Filtered diagnostic around the unchanged original merger helper |
 | `app-grant-preflight` | `codex/preflight-diagnostics` | Advisory six-permission mint candidate, actual credential/protection reads and fixed required-condition endpoint probes |
+| `native-positive-trial` | `codex/preflight-diagnostics` | One-job proposed native operation, exact post-mint owner selection, offline replay and separately selected live observation |
 
 Its source implementation and controlled tests are separate from actual hosted
 execution, successful provider readback and authentic merge acceptance. Do not
@@ -130,7 +131,7 @@ reduced to the role below, and automatic post-job token revocation remains on.
 | Pull requests | Read | Read |
 | Administration | None | Read |
 | Metadata | Read | Read |
-| Commit statuses | None | Read in the branch `app-grant-preflight` only |
+| Commit statuses | None | Read in branch `app-grant-preflight` and `native-positive-trial` |
 
 The main merger preflight and the original `diagnose-merger` job still request
 their original five permissions. Before the new branch preflight, the App owner
@@ -143,7 +144,11 @@ settings and does not grant a merge operation.
 
 Token minting and revocation are credential operations. The preflight helpers
 perform provider reads only; a write-capable token does not authorize an effect.
-The merger job invokes no Exacly merge, ref mutation, PR creation or review action.
+The preflight jobs invoke no Exacly merge, ref mutation, PR creation or review action.
+The separately selected `native-positive-trial` mode is described in the
+[one-job trial runbook](NATIVE-POSITIVE-TRIAL.md). Its environment approval permits
+packet preparation; only later exact owner selections can authorize the native
+operation and its separate observer.
 
 ## 5. Run manual authenticated preflight
 
@@ -203,7 +208,7 @@ dispatch or a replacement PR cannot be used to erase uncertain history or reset
 the original approved trial's accounting.
 
 Each helper call runs under GNU `timeout` with a 120-second work limit and a
-five-second kill-after interval; each job has a five-minute platform limit.
+five-second kill-after interval; those preflight/verifier jobs have a five-minute platform limit.
 Runs serialize per mode/PR and are not cancelled by a newer dispatch. The
 private output directory is new, absolute and outside the checkout. The helper
 receives its installation token only through `CANARY_APP_TOKEN`. Only the verify

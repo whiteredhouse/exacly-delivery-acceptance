@@ -4,19 +4,31 @@ A small public repository for a bounded, independently approved GitHub merge tri
 Its application computes invoice totals in integer cents. It has no external
 dependencies, network client, credentials, publishing or deployment code.
 
-Run its deterministic checks with the Python standard library:
+Run the application's seven deterministic business checks with the standard library:
 
 ```sh
-python3 -B -m unittest discover -s tests -v
+python3 -B -m unittest discover -s tests -p test_canary_app.py -v
 ```
 
 `canary-tests` is the only ordinary CI check. It runs for every pull request and
-push to `main`, has a five-minute deadline and receives only `contents: read`.
+push to `main`, has a ten-minute deadline and receives only `contents: read`.
 Checkout is pinned and does not persist credentials. This ordinary job receives
-no App credentials. There are no tag triggers, application deployments, automatic
-mergers or privileged pull-request triggers. The separate manual App workflow
+no App credentials. There are no tag triggers, application deployments or
+privileged pull-request triggers. The separate manual App workflow
 below can create genuine verification metadata or collect advisory credential
 evidence under its narrowly scoped App.
+
+The separately selected [one-job native positive trial](docs/NATIVE-POSITIVE-TRIAL.md)
+adds an explicitly reviewed mode for the existing data-only PR #5. Its code and
+environment approval only prepare a packet. The owner must separately select the
+exact post-mint operation and later observer packets through authenticated manual
+comments. The private journal and key remain on that one job's filesystem;
+runner-loss recovery is outside this trial's acceptance boundary.
+
+The complete CI suite also installs the pinned native runtime and `strace` for
+real storage, process-profile and offline-tracing checks. Its native integration
+tests must run without skips in that configured job. A business-only local run
+does not establish the full hosted trial's readiness or acceptance.
 
 ## Ordinary CI and the generated merge commit
 
@@ -58,7 +70,7 @@ The main merger preflight attempts its legacy scope, role and protection checks;
 it performs no merge, source/ref update, PR creation, review dismissal or policy change.
 
 The separately owner-reviewed `codex/preflight-diagnostics` branch has two
-additional modes. `diagnose-merger` reproduces the unchanged original helper's
+additional preflight modes. `diagnose-merger` reproduces the unchanged original helper's
 rejection of the App token's observed `push: false` flag. `app-grant-preflight`
 uses pinned merged native Exacly from [PR #118](https://github.com/whiteredhouse/exacly/pull/118)
 to validate an advisory token-bound App-grant candidate, read actual server
@@ -80,7 +92,7 @@ global exactly-once claim or implicit uncertainty reset is made here.
 
 GNU timeout and the job deadline bound the hosted invocation. Private runner
 output is temporary, and no raw evidence directory or credential is uploaded.
-Only `app-grant-preflight` selects four safe advisory metadata files for
+Among the preflight modes, only `app-grant-preflight` selects four safe advisory metadata files for
 seven-day artifact retention. The pinned action attempts token revocation during
 post-job cleanup; verify its actual result. The candidate is not an installed
 configuration and cannot supply approval or a token for a later job. The earlier

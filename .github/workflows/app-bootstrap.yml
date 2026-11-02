@@ -1,5 +1,5 @@
 name: Trusted App bootstrap
-run-name: canary-bootstrap:${{ inputs.mode }}:pr-${{ inputs.mode == 'verify' && inputs.pr_number || '0' }}
+run-name: canary-bootstrap:${{ inputs.mode }}:pr-${{ inputs.mode == 'native-positive-trial' && '5' || (inputs.mode == 'verify' && inputs.pr_number || '0') }}
 
 # Main role environments and the separate owner-reviewed diagnostic environment
 # require their exact branch policies before storing keys. All runs are manual.
@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Read-only App preflight, merger diagnostic or exact generated-merge verification
+        description: App preflight, exact generated-merge verification or separately approved native trial
         type: choice
-        options: [preflight, verify, diagnose-merger, app-grant-preflight]
+        options: [preflight, verify, diagnose-merger, app-grant-preflight, native-positive-trial]
         default: preflight
         required: true
       pr_number:
@@ -26,6 +26,146 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-positive-trial:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/codex/preflight-diagnostics' && github.run_attempt == 1
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205'
+          && github.actor_id == '1679024'
+          && inputs.mode == 'native-positive-trial' && inputs.pr_number == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    environment:
+      name: canary-merger-diagnostic
+      deployment: false
+    steps:
+      - name: Check out the reviewed fixed trial coordinator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: diagnostic
+          persist-credentials: false
+      - name: Check out the exact merged native runtime
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: whiteredhouse/exacly
+          ref: 9a5cd90b8d3c3b2acc2a00e7e68e175558025432
+          path: exacly-runtime
+          persist-credentials: false
+      - name: Install the fixed runtime tools before minting
+        uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          working_directory: exacly-runtime
+          install_args: python uv
+          persist_github_token: false
+      - name: Install tracing and locked dependencies before minting
+        run: |
+          sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 180s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=30 update
+          sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 180s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+            -o DPkg::Lock::Timeout=30 install --yes strace libseccomp2
+          uv sync --locked --project exacly-runtime --python 3.12
+      - name: Mint the selected token for this job only
+        id: native-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: '5572362'
+          private-key: ${{ secrets.MERGER_PRIVATE_KEY }}
+          owner: whiteredhouse
+          repositories: exacly-delivery-acceptance
+          github-api-url: https://api.github.com
+          permission-contents: write
+          permission-pull-requests: read
+          permission-checks: read
+          permission-administration: read
+          permission-metadata: read
+          permission-statuses: read
+          skip-token-revoke: false
+      - name: Prepare actual storage and the proposed merge packet
+        id: native-prepare
+        env:
+          CANARY_APP_TOKEN: ${{ steps.native-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.native-token.outputs.installation-id }}
+          CANARY_RELAY_TOKEN: ${{ github.token }}
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            uv run --no-sync --project exacly-runtime python -I -B diagnostic/tools/native_positive_trial.py prepare \
+            --core-source "$GITHUB_WORKSPACE/exacly-runtime" \
+            --private "$RUNNER_TEMP/native-positive-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Publish only the proposed merge packet and manual owner instructions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-positive-merge-proposal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-proposal.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-approval-instructions.json
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false
+          if-no-files-found: error
+      - name: Await exact owner selection, invoke once and prove offline replay
+        id: native-merge
+        env:
+          CANARY_APP_TOKEN: ${{ steps.native-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.native-token.outputs.installation-id }}
+          CANARY_RELAY_TOKEN: ${{ github.token }}
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 1200s \
+            uv run --no-sync --project exacly-runtime python -I -B diagnostic/tools/native_positive_trial.py merge \
+            --core-source "$GITHUB_WORKSPACE/exacly-runtime" \
+            --private "$RUNNER_TEMP/native-positive-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Publish only the separately proposed observer packet and instructions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-positive-observer-proposal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-proposal.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-approval-instructions.json
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false
+          if-no-files-found: error
+      - name: Await separate observer selection and run the authentic bound test once
+        id: native-observe
+        env:
+          CANARY_APP_TOKEN: ${{ steps.native-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.native-token.outputs.installation-id }}
+          CANARY_RELAY_TOKEN: ${{ github.token }}
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 900s \
+            uv run --no-sync --project exacly-runtime python -I -B diagnostic/tools/native_positive_trial.py observe \
+            --core-source "$GITHUB_WORKSPACE/exacly-runtime" \
+            --private "$RUNNER_TEMP/native-positive-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Retain only safe trial results and actual owner selection receipts
+        if: ${{ always() && steps.native-token.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-positive-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-approval-receipt.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-approval-receipt.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-result.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/offline-replay.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-result.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/trial-report.json
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false
+          if-no-files-found: warn
+
   app-grant-preflight:
     if: >-
       ${{ github.event_name == 'workflow_dispatch'
