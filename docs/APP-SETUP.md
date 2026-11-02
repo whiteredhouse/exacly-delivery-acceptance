@@ -51,8 +51,11 @@ Read back the actual policy, separate required-signatures endpoint and effective
 branch rules. Confirm all of the following before storing keys:
 
 - Strict required check `exacly-generated-merge`, produced by App `5572341`.
-  The payload has an empty legacy `contexts` list and its explicit App-pinned
-  `checks` entry. Ordinary `canary-tests` is not a second required H-only context.
+  Send the explicit App-pinned `checks` form only. Do not also send the legacy
+  `contexts` field, even as an empty list: GitHub validates these as alternative
+  request shapes and rejects both together with HTTP 422. A read response may
+  expose both fields; that does not make both valid in this update request.
+  Ordinary `canary-tests` is not a second required H-only context.
 - One independent approving review, stale-review dismissal, latest-push approval,
   administrator enforcement and conversation resolution; no review bypass actors.
 - No force updates, deletion, required linear history or required signatures.
