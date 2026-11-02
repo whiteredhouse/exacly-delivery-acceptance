@@ -1,0 +1,165 @@
+name: Trusted App bootstrap
+run-name: canary-bootstrap:${{ inputs.mode }}:pr-${{ inputs.mode == 'verify' && inputs.pr_number || '0' }}
+
+# Environment branch policies and protected main are required before storing keys.
+# This workflow never runs automatically or checks out candidate code.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Read-only App preflight or exact generated-merge verification
+        type: choice
+        options: [preflight, verify]
+        default: preflight
+        required: true
+      pr_number:
+        description: Positive decimal PR number; required only for verify
+        type: string
+        default: ""
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary-app-bootstrap-${{ inputs.mode }}-${{ inputs.pr_number || 'preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  verifier-preflight:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205' && inputs.mode == 'preflight' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment:
+      name: canary-verifier
+      deployment: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Mint one-repository verifier token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: '5572341'
+          private-key: ${{ secrets.VERIFIER_PRIVATE_KEY }}
+          owner: whiteredhouse
+          repositories: exacly-delivery-acceptance
+          github-api-url: https://api.github.com
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: write
+          permission-metadata: read
+          skip-token-revoke: false
+      - name: Authenticate verifier installation without provider writes
+        env:
+          CANARY_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            python3 -I -B tools/app_bootstrap.py preflight \
+            --role verifier --installation-id "$CANARY_INSTALLATION_ID" \
+            --out "$RUNNER_TEMP/canary-verifier-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+  merger-preflight:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205' && inputs.mode == 'preflight' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment:
+      name: canary-merger
+      deployment: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Mint one-repository merger token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: '5572362'
+          private-key: ${{ secrets.MERGER_PRIVATE_KEY }}
+          owner: whiteredhouse
+          repositories: exacly-delivery-acceptance
+          github-api-url: https://api.github.com
+          permission-contents: write
+          permission-pull-requests: read
+          permission-checks: read
+          permission-administration: read
+          permission-metadata: read
+          skip-token-revoke: false
+      - name: Authenticate merger installation without merge or ref writes
+        env:
+          CANARY_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            python3 -I -B tools/app_bootstrap.py preflight \
+            --role merger --installation-id "$CANARY_INSTALLATION_ID" \
+            --out "$RUNNER_TEMP/canary-merger-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+  verify-generated-merge:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+          && github.repository == 'whiteredhouse/exacly-delivery-acceptance'
+          && github.repository_id == '1442278205' && inputs.mode == 'verify' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    environment:
+      name: canary-verifier
+      deployment: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate the data-only PR selection before minting a token
+        env:
+          CANARY_PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          python3 -I -B - <<'PY'
+          import os
+          import re
+          if re.fullmatch(r"[1-9][0-9]{0,9}", os.environ["CANARY_PR_NUMBER"]) is None:
+              raise SystemExit("verify requires a positive decimal PR number without leading zeros")
+          PY
+      - name: Mint one-repository verifier token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: '5572341'
+          private-key: ${{ secrets.VERIFIER_PRIVATE_KEY }}
+          owner: whiteredhouse
+          repositories: exacly-delivery-acceptance
+          github-api-url: https://api.github.com
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: write
+          permission-metadata: read
+          skip-token-revoke: false
+      - name: Verify exact generated merge and retain the genuine check result
+        env:
+          CANARY_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          CANARY_ACTIONS_READ_TOKEN: ${{ github.token }}
+          CANARY_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          CANARY_PR_NUMBER: ${{ inputs.pr_number }}
+          CANARY_RUN_URL: https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/${{ github.run_id }}
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            python3 -I -B tools/app_bootstrap.py verify \
+            --pr-number "$CANARY_PR_NUMBER" --source-commit "$GITHUB_SHA" \
+            --installation-id "$CANARY_INSTALLATION_ID" --run-url "$CANARY_RUN_URL" \
+            --out "$RUNNER_TEMP/canary-verification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
