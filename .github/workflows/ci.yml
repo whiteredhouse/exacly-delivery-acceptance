@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: whiteredhouse/exacly
-          ref: 9ef4b0adc5f61310154544c636693123fd225737
+          ref: 6e210d337f11cbd0e48fdb9df15d4d5089ce5782
           path: exacly-readiness-runtime
           persist-credentials: false
       - name: Install locked test dependencies and tracing

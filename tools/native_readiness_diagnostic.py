@@ -24,10 +24,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
-CORE_REVISION = "9ef4b0adc5f61310154544c636693123fd225737"
+CORE_REVISION = "6e210d337f11cbd0e48fdb9df15d4d5089ce5782"
 NATIVE_PINS = {
-    "automatic_merge.py": "d8dce24220ba7ad8bb74c6b8bfab8996401c8973744754ae858a25eecfbb706f",
-    "github_merge.py": "14b098888937221d3198f0804a5e3812a13f5bc31a99056d882a984c35e292ab",
+    "automatic_merge.py": "e6646012de31fb473f298861fa482bc7741e4592bd84375feaa1ebed1f9356b7",
+    "github_merge.py": "207ac9bc6df50f8baf8ceafb7568163a26ccb02b2ee79da86707404298587d28",
 }
 SPEC_DIGEST = "sha256:7fe9884fe053ab7804e0f53ce0c121d36a8860d9ffd8f13ca8f284ecd5c88905"
 API = "https://api.github.com"
@@ -48,8 +48,24 @@ NATIVE_STAGES = {"key", "credential", "repository", "installation_scope", "prote
                  "pull_request", "review", "legacy_head_status", "legacy_merge_status", "branch_conditions",
                  "ancestry", "checks", "merge_commit", "contract_trees", "references", "ready_facts", "unknown",
                  "unstable_capability", "legacy_status_facts", "required_condition_facts"}
-NATIVE_CODES = {"http_error", "transport_error", "invalid_response", "deadline_or_storage", "local_io_error",
-                "malformed_facts", "validation_failed"}
+NATIVE_CODES = {
+    "actor_admin", "actor_facts", "actor_fields", "actor_identity", "actor_maintain", "ancestry_fields",
+    "approval_threshold", "base_reference", "branch_conversation_policy", "branch_deployments",
+    "branch_environments", "branch_policy_fields", "branch_push_policy", "check_fields", "condition_evidence",
+    "condition_fields", "condition_identities", "condition_revisions", "condition_scope", "contract_fields",
+    "contract_inventory", "deadline_or_storage", "effective_rules", "fact_fields", "facts_present", "git_fields",
+    "head_ancestry", "head_reference", "http_error", "installation_scope", "invalid_response",
+    "legacy_check_overlap", "legacy_contexts", "legacy_fields", "legacy_inventory", "legacy_scopes",
+    "local_io_error", "malformed_facts", "marker_reference", "merge_commit", "merge_queue_setting", "merge_state",
+    "mergeability", "mergeability_fields", "pr_base_ref", "pr_base_revision", "pr_draft", "pr_head_ref",
+    "pr_head_repository", "pr_head_revision", "pr_merge_revision", "pr_merged", "pr_number", "pr_repository",
+    "pr_state", "protection_current", "protection_fields", "pull_request_fields", "pull_request_identity",
+    "queue_membership", "repository_fields", "repository_relationship", "required_check_completion",
+    "required_check_conclusion", "required_check_identity", "required_check_ids", "required_check_inventory",
+    "required_check_policy", "required_check_revision", "review_base", "review_conversations", "review_decision",
+    "review_fields", "review_head", "review_merge", "review_thread_fields", "review_thread_ids",
+    "transport_error", "validation_failed",
+}
 SAFE_ERROR_CODES = {"diagnostic_validation_failed", "transport_refused", "native_source_unverified",
                     "diagnostic_context_invalid", "diagnostic_source_unverified", "private_output_invalid",
                     "unsafe_diagnostic_output", "diagnostic_credential_invalid", "diagnostic_target_changed",
