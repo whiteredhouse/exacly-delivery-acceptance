@@ -18,12 +18,14 @@ privileged pull-request triggers. The separate manual App workflow
 below can create genuine verification metadata or collect advisory credential
 evidence under its narrowly scoped App.
 
-The separately selected [one-job native positive trial](docs/NATIVE-POSITIVE-TRIAL.md)
-adds an explicitly reviewed mode for the existing data-only PR #5. Its code and
-environment approval only prepare a packet. The owner must separately select the
-exact post-mint operation and later observer packets through authenticated manual
-comments. The private journal and key remain on that one job's filesystem;
-runner-loss recovery is outside this trial's acceptance boundary.
+The [original native trial](docs/NATIVE-POSITIVE-TRIAL.md) consumed its full
+allowance. The proposed [supplemental trial](docs/NATIVE-SUPPLEMENTAL-TRIAL.md)
+keeps the same objective, operation key and existing data-only PR #5. Before any
+App token is minted or native installation created, the owner must explicitly
+approve one additional finite allowance in the actual environment-review
+comment. The exact post-mint operation and later observer packets still require
+their separate manual PR comments. The private journal and key remain on one
+continuously alive job's filesystem; runner-loss recovery remains unverified.
 
 The complete CI suite also installs the pinned native runtime and `strace` for
 real storage, process-profile and offline-tracing checks. Its native integration

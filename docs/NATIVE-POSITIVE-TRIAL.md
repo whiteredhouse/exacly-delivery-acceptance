@@ -1,5 +1,10 @@
 # One-job native positive trial
 
+Historical record: [run 41526436188](https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/41526436188)
+consumed this trial's full allowance. These instructions cannot authorize a
+rerun or replacement installation. See the [supplemental trial](NATIVE-SUPPLEMENTAL-TRIAL.md)
+for the separately proposed additional allowance and its required owner approval.
+
 This is a fixed nonproduction trial for existing PR #5 in
 `whiteredhouse/exacly-delivery-acceptance`. One continuously alive Ubuntu job
 keeps the actual private journal, marker key and installed runtime. It prepares

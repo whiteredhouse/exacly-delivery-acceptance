@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -124,6 +125,51 @@ def canonical(value):
 
 def digest(value):
     return "sha256:" + hashlib.sha256(canonical(value)).hexdigest()
+
+
+def _protocol():
+    path = Path(__file__).resolve().with_name("native_trial_protocol.py")
+    require(path.resolve() == path, "native_trial_runtime_changed")
+    loaded = importlib.util.spec_from_file_location("native_trial_protocol", path)
+    require(loaded is not None and loaded.loader is not None, "native_trial_runtime_changed")
+    module = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(module)
+    return module
+
+
+def _settings(profile):
+    if profile is None:
+        return {"core_revision": CORE, "native_pins": PINS}
+    selected = _protocol().load(Path(__file__).resolve().parent.parent)["profile"]
+    require(type(profile) is dict and profile == selected, "native_trial_runtime_changed")
+    return selected
+
+
+def _check_allocation(prepared, profile):
+    proposal = prepared["proposal"]
+    if profile is None:
+        require(
+            not ({"runtime_profile", "supplemental_allocation"} & set(prepared))
+            and not ({"runtime_profile", "supplemental_allocation"} & set(proposal)),
+            "native_trial_supplemental_allocation_changed",
+        )
+        return
+    settings = _settings(profile)
+    require(
+        prepared.get("runtime_profile") == proposal.get("runtime_profile") == settings
+        and digest(prepared["spec"]) == proposal.get("spec_digest") == settings["spec_digest"],
+        "native_trial_supplemental_allocation_changed",
+    )
+    try:
+        checked = _protocol().validate_allocation(prepared.get("supplemental_allocation"), profile=settings,
+                                                  spec=prepared["spec"], context=prepared["context"])
+    except ValueError:
+        raise ExecutionStopped("native_trial_supplemental_allocation_changed") from None
+    require(
+        type(checked) is dict
+        and checked == prepared.get("supplemental_allocation") == proposal.get("supplemental_allocation"),
+        "native_trial_supplemental_allocation_changed",
+    )
 
 
 def _unique(pairs):
@@ -373,7 +419,9 @@ def _selected(prepared, selection, receipt, phase):
     )
 
 
-def _integrity(prepared):
+def _integrity(prepared, *, profile=None):
+    settings = _settings(profile)
+    _check_allocation(prepared, profile)
     root = _path(prepared["private_dir"])
     info = root.lstat()
     require(
@@ -402,6 +450,8 @@ def _integrity(prepared):
         "limits",
         "native_limits",
     }
+    if profile is not None:
+        required.add("allocation")
     require(
         isinstance(documents, dict) and set(documents) == required,
         "native_trial_packet_changed",
@@ -413,7 +463,7 @@ def _integrity(prepared):
             and selected == {"path": str(path), "digest": digest(_json(path))},
             "native_trial_packet_changed",
         )
-    for name, field in (
+    document_fields = (
         ("config", "configuration"),
         ("policy", "policy"),
         ("request", "request"),
@@ -421,7 +471,10 @@ def _integrity(prepared):
         ("approval", "operation_approval"),
         ("identity", "identity_decision"),
         ("mint", "mint_attestation"),
-    ):
+    )
+    if profile is not None:
+        document_fields += (("allocation", "supplemental_allocation"),)
+    for name, field in document_fields:
         require(_json(paths[name]) == proposal[field], "native_trial_packet_changed")
     storage = proposal["storage"]
     journal = _path(paths["journal"])
@@ -458,7 +511,7 @@ def _integrity(prepared):
     core = _path(str(prepared["core_source"]))
     require(
         core.resolve(strict=True) == core
-        and proposal["core"]["revision"] == CORE
+        and proposal["core"]["revision"] == settings["core_revision"]
         and proposal["core"]["source"] == str(core)
         and proposal["core"]["python"] == str(prepared["python"]),
         "native_trial_runtime_changed",
@@ -487,7 +540,9 @@ def _integrity(prepared):
         inventory and digest(inventory) == proposal["core"]["source_inventory_digest"],
         "native_trial_runtime_changed",
     )
-    for name, expected in PINS.items():
+    if profile is not None:
+        require(proposal["core"]["source_pins"] == settings["native_pins"], "native_trial_runtime_changed")
+    for name, expected in settings["native_pins"].items():
         require(
             _source_hash(core / "python/src/exacly" / name, MAX_DOCUMENT) == expected,
             "native_trial_runtime_changed",
@@ -701,10 +756,10 @@ def _cli(prepared, selection, root, name, token, *, reconcile=False):
     return report
 
 
-def execute(prepared, selection_receipt, *, token):
+def execute(prepared, selection_receipt, *, token, profile=None):
     """Consume one selected invocation; uncertainty permits only one same-scope read."""
     try:
-        root = _integrity(prepared)
+        root = _integrity(prepared, profile=profile)
         selection = prepared["selection"]
         _selected(prepared, selection, selection_receipt, "merge")
         require(
@@ -738,7 +793,7 @@ def execute(prepared, selection_receipt, *, token):
                 and approval.get("kind") == "delivery-approval"
                 and _time(approval["not_before"]) <= now < _time(approval["expires_at"])
             ):
-                _integrity(prepared)
+                _integrity(prepared, profile=profile)
                 _write(
                     root / "reconcile-attempt.json",
                     {
@@ -783,10 +838,10 @@ def _journal_unchanged(path, original, info):
     )
 
 
-def offline_replay(prepared, applied_report, *, token):
+def offline_replay(prepared, applied_report, *, token, profile=None):
     """Replay the actual terminal CLI with the key absent and two network controls."""
     try:
-        root = _integrity(prepared)
+        root = _integrity(prepared, profile=profile)
         _applied(prepared, applied_report)
         _write(
             root / "offline-attempt.json",
@@ -941,10 +996,10 @@ def offline_replay(prepared, applied_report, *, token):
         raise ExecutionStopped("native_trial_offline_stopped") from None
 
 
-def observe(prepared, observer, selection_receipt, *, token):
+def observe(prepared, observer, selection_receipt, *, token, profile=None):
     """Run the actual bound live test exactly once, then verify its retained receipt."""
     try:
-        root = _integrity(prepared)
+        root = _integrity(prepared, profile=profile)
         applied = _json(root / "execution-report.json")
         _applied(prepared, applied)
         selection = observer["selection"]
