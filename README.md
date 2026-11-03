@@ -4,18 +4,33 @@ A small public repository for a bounded, independently approved GitHub merge tri
 Its application computes invoice totals in integer cents. It has no external
 dependencies, network client, credentials, publishing or deployment code.
 
-Run its deterministic checks with the Python standard library:
+Run the application's seven deterministic business checks with the standard library:
 
 ```sh
-python3 -B -m unittest discover -s tests -v
+python3 -B -m unittest discover -s tests -p test_canary_app.py -v
 ```
 
 `canary-tests` is the only ordinary CI check. It runs for every pull request and
-push to `main`, has a five-minute deadline and receives only `contents: read`.
+push to `main`, has a ten-minute deadline and receives only `contents: read`.
 Checkout is pinned and does not persist credentials. This ordinary job receives
-no App credentials. There are no tag triggers, application deployments, automatic
-mergers or privileged pull-request triggers. The separate manual App workflow
-below can create genuine verification metadata under its narrowly scoped App.
+no App credentials. There are no tag triggers, application deployments or
+privileged pull-request triggers. The separate manual App workflow
+below can create genuine verification metadata or collect advisory credential
+evidence under its narrowly scoped App.
+
+The [original native trial](docs/NATIVE-POSITIVE-TRIAL.md) consumed its full
+allowance. The proposed [supplemental trial](docs/NATIVE-SUPPLEMENTAL-TRIAL.md)
+keeps the same objective, operation key and existing data-only PR #5. Before any
+App token is minted or native installation created, the owner must explicitly
+approve one additional finite allowance in the actual environment-review
+comment. The exact post-mint operation and later observer packets still require
+their separate manual PR comments. The private journal and key remain on one
+continuously alive job's filesystem; runner-loss recovery remains unverified.
+
+The complete CI suite also installs the pinned native runtime and `strace` for
+real storage, process-profile and offline-tracing checks. Its native integration
+tests must run without skips in that configured job. A business-only local run
+does not establish the full hosted trial's readiness or acceptance.
 
 ## Ordinary CI and the generated merge commit
 
@@ -42,9 +57,9 @@ review all source first, apply and read back those guards, then store each key
 only in its own protected environment. App registration and a matching ID are
 not an authenticated preflight or an Exacly runtime grant.
 
-`Trusted App bootstrap` runs only by manual dispatch from this repository's
-`main`. Its `preflight` mode authenticates each one-repository role and observes
-actual endpoint access. Its `verify` mode uses only the verifier App to check
+`Trusted App bootstrap` runs only by manual dispatch. Its main-only `preflight`
+mode checks each one-repository role and observes actual endpoint access. Its
+main-only `verify` mode uses only the verifier App to check
 one selected same-repository PR whose sole change is the bounded `canary.txt`
 label. Candidate Git objects are data; the App token never enters Git, verifier
 or business-test subprocess environments.
@@ -53,8 +68,22 @@ The fixed helper validates current B/H/M/tree and the protected trusted source,
 runs the local verifier's seven actual business cases, then rechecks GitHub
 identities before creating at most one `exacly-generated-merge` check on exact M.
 Only the genuine verifier App's result can satisfy the configured required check.
-The merger preflight reads scope, permissions and protection; it performs no
-merge, source/ref update, PR creation, review dismissal or policy change.
+The main merger preflight attempts its legacy scope, role and protection checks;
+it performs no merge, source/ref update, PR creation, review dismissal or policy change.
+
+The separately owner-reviewed `codex/preflight-diagnostics` branch has two
+additional preflight modes. `diagnose-merger` reproduces the unchanged original helper's
+rejection of the App token's observed `push: false` flag. `app-grant-preflight`
+uses pinned merged native Exacly from [PR #118](https://github.com/whiteredhouse/exacly/pull/118)
+to validate an advisory token-bound App-grant candidate, read actual server
+protection and probe the added required-condition endpoints for the existing
+canary PR #5. Its six-permission grant requests Commit statuses read access,
+which requires the App owner's explicit approval. Successful endpoint access
+establishes no independent mint approval, PR readiness or merge authority.
+Both modes require explicit key release through the separate,
+owner-reviewed `canary-merger-diagnostic` environment and approval of the exact
+frozen run; they do not need to merge into main. See the
+[branch preflight setup](docs/APP-SETUP.md#7-owner-reviewed-app-grant-candidate-preflight).
 
 The hosted verification path checks its real run and complete bounded workflow
 history. Reruns and prior unsuccessful verification for the same PR block a new
@@ -65,6 +94,12 @@ global exactly-once claim or implicit uncertainty reset is made here.
 
 GNU timeout and the job deadline bound the hosted invocation. Private runner
 output is temporary, and no raw evidence directory or credential is uploaded.
+Among the preflight modes, only `app-grant-preflight` selects four safe advisory metadata files for
+seven-day artifact retention. The pinned action attempts token revocation during
+post-job cleanup; verify its actual result. The candidate is not an installed
+configuration and cannot supply approval or a token for a later job. The earlier
+five-permission preflight remains historical evidence for its original source
+and revoked token. The new source and permission require a fresh review and run.
 Select protected durable retention separately before a live merge trial. A
 successful check remains verification metadata; actual independent review,
 current native readiness and the separately approved finite merge packet are

@@ -34,6 +34,33 @@ RUN_URL = re.compile(r"https://github\.com/whiteredhouse/exacly-delivery-accepta
 MAX_RESPONSE = 1024 * 1024
 MAX_HTTP_CALLS = 40
 WORK_SECONDS = 75
+PREFLIGHT_STAGES = frozenset((
+    "configuration", "installation_identity", "trusted_source", "role_token",
+    "repository_read", "installation_scope_read", "main_ref_read",
+    "actor_permissions", "classic_protection_read", "required_signatures_read",
+    "effective_rules_read", "classic_policy", "result_persistence",
+))
+PREFLIGHT_REASONS = frozenset((
+    "invalid trusted App configuration",
+    "trusted App configuration differs from fixed canary identities",
+    "minted installation ID differs from trusted role configuration",
+    "trusted source HEAD differs from selected source commit",
+    "CANARY_APP_TOKEN is required",
+    "repository identity changed", "public canary repository is unavailable",
+    "token must select exactly one repository", "token repository scope changed",
+    "current main differs from trusted source",
+    "merge actor is not a non-admin/non-maintainer push actor",
+    "effective rulesets are unsupported by current merge profile",
+    "classic protection/signature facts are unavailable",
+    "required App check configuration changed", "independent review policy changed",
+    "review bypass configuration is unknown", "classic protection capability changed",
+    "GitHub rejected the bounded request", "GitHub request outcome is unavailable",
+    "request is outside fixed canary API scope", "HTTP read/time budget exhausted",
+    "GitHub response status is unsupported", "HTTP deadline expired",
+    "duplicate JSON key", "bounded JSON response required", "nonfinite JSON value",
+    "JSON response could not be decoded", "local evidence exceeds byte bound",
+    "local evidence write was incomplete", "bounded bootstrap could not complete",
+))
 QUERY = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){databaseId id pullRequest(number:$number){number state isDraft merged isCrossRepository headRefOid baseRefOid potentialMergeCommit{oid}}}}"""
 
 
@@ -115,6 +142,7 @@ class Client:
         require(isinstance(token, str) and bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,1024}", token)), "CANARY_APP_TOKEN is required")
         self.token, self.deadline, self.sender = token, deadline, sender or transport
         self.calls, self.check_posts = 0, 0
+        self.stage = None
 
     def request(self, method, path, payload=None):
         reads = (
@@ -231,9 +259,11 @@ def source_snapshot(verifier, deadline, selected=None):
 
 
 def scope(client):
+    client.stage = "repository_read"
     repository = client.request("GET", PREFIX)
     require(isinstance(repository, dict) and repository.get("id") == REPOSITORY["id"] and repository.get("full_name") == REPOSITORY["full_name"], "repository identity changed")
     require(repository.get("private") is False and repository.get("default_branch") == "main" and repository.get("archived") is False and repository.get("disabled") is False, "public canary repository is unavailable")
+    client.stage = "installation_scope_read"
     installation = client.request("GET", "/installation/repositories?per_page=100")
     require(isinstance(installation, dict) and type(installation.get("total_count")) is int and installation["total_count"] == 1, "token must select exactly one repository")
     repositories = installation.get("repositories")
@@ -242,16 +272,22 @@ def scope(client):
 
 
 def current_main(client, source):
+    client.stage = "main_ref_read"
     reference = client.request("GET", PREFIX + "/git/ref/heads/main")
     require(isinstance(reference, dict) and reference.get("ref") == "refs/heads/main" and reference.get("object", {}).get("sha") == source and reference.get("object", {}).get("type") == "commit", "current main differs from trusted source")
 
 
 def merger_access(client, repository):
+    client.stage = "actor_permissions"
     permissions = repository.get("permissions")
     require(isinstance(permissions, dict) and permissions.get("admin") is False and permissions.get("maintain") is False and permissions.get("push") is True, "merge actor is not a non-admin/non-maintainer push actor")
+    client.stage = "classic_protection_read"
     protection = client.request("GET", PREFIX + "/branches/main/protection")
+    client.stage = "required_signatures_read"
     signatures = client.request("GET", PREFIX + "/branches/main/protection/required_signatures")
+    client.stage = "effective_rules_read"
     rules = client.request("GET", PREFIX + "/rules/branches/main")
+    client.stage = "classic_policy"
     require(rules == [], "effective rulesets are unsupported by current merge profile")
     require(isinstance(protection, dict) and isinstance(signatures, dict) and signatures.get("enabled") is False, "classic protection/signature facts are unavailable")
     checks, reviews = protection.get("required_status_checks"), protection.get("required_pull_request_reviews")
@@ -397,15 +433,19 @@ def execute(arguments, sender=None):
     verifier = runpy.run_path(str(ROOT / "tools/verify_merge.py"), run_name="trusted_canary_verifier")
     bundle = Bundle(arguments.out, verifier)
     client = None
+    stage = "configuration"
     try:
         config = load_configuration(verifier)
         role = arguments.role if arguments.command == "preflight" else "verifier"
+        stage = "installation_identity"
         require(role in ROLES and arguments.installation_id == ROLES[role]["installation_id"], "minted installation ID differs from trusted role configuration")
         selected_source = arguments.source_commit if arguments.command == "verify" else None
         if selected_source is not None:
             require(isinstance(selected_source, str) and SHA.fullmatch(selected_source), "exact selected source commit required")
+        stage = "trusted_source"
         git, source, inventory = source_snapshot(verifier, deadline, selected_source)
         bundle.write("selection.json", {"role": role, "configured_app": config["apps"][role], "source_commit": source, "opaque_token_issuer_api_verified": False, "identity_basis": "trusted workflow selected App/private-key mint and independently checked action installation ID"})
+        stage = "role_token"
         client = Client(os.environ.get("CANARY_APP_TOKEN"), deadline, sender)
         repository = scope(client)
         current_main(client, source)
@@ -415,11 +455,14 @@ def execute(arguments, sender=None):
         else:
             result = verify(client, verifier, bundle, git, source, inventory, repository, arguments, deadline, sender)
         result["http_calls"] = client.calls
+        client.stage = "result_persistence"
         bundle.write("result.json", result)
         return result
     except Exception as error:
         # Raw HTTP/Git diagnostics and arbitrary exception text can contain credentials.
         result = {"status": "uncertain" if client is not None and client.check_posts else "rejected", "reason": str(error) if isinstance(error, Refused) else "bounded bootstrap could not complete", "provider_check_posts": 0 if client is None else client.check_posts, "retry_permitted": False}
+        if arguments.command == "preflight":
+            result["stage"] = client.stage if client is not None and client.stage is not None else stage
         try:
             bundle.write("result.json", result)
         except Exception:
@@ -449,7 +492,12 @@ def main():
         result = execute(arguments)
     except Exception:
         result = {"status": "uncertain", "reason": "bootstrap state and private output could not be established", "provider_check_posts": None, "retry_permitted": False}
-    print(json.dumps({"status": result["status"], "out": arguments.out, "provider_check_posts": result.get("provider_check_posts", 0)}))
+    summary = {"status": result["status"], "out": arguments.out, "provider_check_posts": result.get("provider_check_posts", 0)}
+    if arguments.command == "preflight" and result["status"] == "rejected":
+        reason, stage = result.get("reason"), result.get("stage")
+        summary["reason"] = reason if isinstance(reason, str) and reason in PREFLIGHT_REASONS else "bounded bootstrap could not complete"
+        summary["stage"] = stage if isinstance(stage, str) and stage in PREFLIGHT_STAGES else "unknown"
+    print(json.dumps(summary))
     return 0 if result["status"] in ("ready", "published", "reused") else 1
 
 
