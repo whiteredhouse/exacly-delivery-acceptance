@@ -22,7 +22,8 @@ helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
 TARGET = json.loads((ROOT / "config/native-positive-trial.json").read_bytes())
 TOKEN = "controlled-diagnostic-token-never-publish"
-GITHUB = SimpleNamespace(READ_QUERY="query($owner:String!){read}", UNSTABLE_QUERY="query($owner:String!){conditions}")
+GITHUB = SimpleNamespace(READ_QUERY="query($owner:String!){read}", UNSTABLE_QUERY="query($owner:String!){conditions}",
+                         MERGE_RECEIPT_QUERY="query($owner:String!){mergedReceipt}")
 
 
 class Response(io.BytesIO):
@@ -119,9 +120,12 @@ class NativeReadinessDiagnosticTests(unittest.TestCase):
                          {"stage": "protection", "code": "http_error", "http_status": 403})
         self.assertEqual(helper.native_diagnostic("GitHub merge readiness blocked: stage=key; code=local_io_error."),
                          {"stage": "key", "code": "local_io_error"})
+        self.assertEqual(helper.native_diagnostic("GitHub merge readiness blocked: stage=ready_facts; code=review_decision."),
+                         {"stage": "ready_facts", "code": "review_decision"})
         for reason in (TOKEN, "Delivery credentials, key or current exact protected merge conditions block.",
                        "GitHub merge readiness blocked: stage=unreviewed; code=http_error; http_status=403.",
                        "GitHub merge readiness blocked: stage=key; code=validation_failed; http_status=403.",
+                       "GitHub merge readiness blocked: stage=ready_facts; code=review_decision; http_status=403.",
                        "GitHub merge readiness blocked: stage=key; code=http_error; http_status=600.",
                        "GitHub merge readiness blocked: stage=key; code=local_io_error.\n" + TOKEN, None):
             with self.subTest(reason=type(reason).__name__):
@@ -135,6 +139,7 @@ class NativeReadinessDiagnosticTests(unittest.TestCase):
         bad = [request(helper.API + helper.PREFIX, method=method) for method in ("POST", "PUT", "PATCH", "DELETE")]
         bad += [request(helper.API + "/graphql", method="POST", body=helper.encoded(body)) for body in (
             {"query": "mutation{updateRefs}", "variables": native_variables},
+            {"query": GITHUB.MERGE_RECEIPT_QUERY, "variables": native_variables},
             {"query": GITHUB.READ_QUERY, "variables": {**native_variables, "number": 6}},
             {"query": GITHUB.READ_QUERY + " mutation{updateRefs}", "variables": native_variables})]
         bad += [request(url) for url in ("http://api.github.com" + helper.PREFIX,
@@ -254,12 +259,16 @@ f.NODE_ID, f.PREFIX, f.BASE_REF, f.HEAD_REF = helper.REPOSITORY['node_id'], help
 f.BASE, f.HEAD, f.MERGE, f.TREE = (spec[n] for n in ('base_revision', 'head_revision', 'merge_revision', 'merge_tree'))
 f.TOKEN = token
 native = helper.load_native(core)
+assert {check.value for check in automatic_merge.ReadinessCheck} <= helper.NATIVE_CODES
 context = {'repository':helper.REPOSITORY['full_name'],'repository_id':helper.REPOSITORY['id'],
            'source':'f'*40,'run_id':12345,'run_attempt':1,'ref':helper.REF,'job':helper.JOB,
            'workflow_ref':helper.REPOSITORY['full_name']+'/.github/workflows/app-bootstrap.yml@'+helper.REF}
 class Backend(f.ScriptedGitHub):
  def respond(self, method, path, body):
-  if method == 'GET' and path == helper.PREFIX+'/pulls/5': return copy.deepcopy(self.pull_request)
+  if method == 'GET' and path == helper.PREFIX+'/pulls/5':
+   result=copy.deepcopy(self.pull_request)
+   result.pop('merge_commit_sha',None)
+   return result
   if method == 'POST' and path == '/graphql':
    expected={'owner':'whiteredhouse','name':'exacly-delivery-acceptance','number':5}
    repo={'id':helper.REPOSITORY['node_id'],'databaseId':helper.REPOSITORY['id']}
@@ -287,6 +296,19 @@ def forbid(event,args):
   socket_calls.append(event);raise AssertionError('controlled fixture attempted network')
 sys.addaudithook(forbid)
 os.environ.update(CANARY_APP_TOKEN=token,CANARY_INSTALLATION_ID='177653055',RUNNER_TEMP=str(folder))
+# The real installed post-effect query is deliberately outside this job's
+# inspection-only transport, even though it is itself a GraphQL read.
+receipt_backend=backend()
+receipt_opener=helper.ReadOnlyOpener(spec,github_merge,token,inner=receipt_backend)
+receipt_request=helper.urllib.request.Request(helper.API+'/graphql',method='POST',
+ data=helper.encoded({'query':github_merge.MERGE_RECEIPT_QUERY,
+                      'variables':{'owner':'whiteredhouse','name':'exacly-delivery-acceptance','number':5}}),
+ headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json',
+          'X-GitHub-Api-Version':'2026-03-10','Content-Type':'application/json'})
+try: receipt_opener.open(receipt_request,10)
+except helper.Stopped: pass
+else: raise AssertionError('post-effect query escaped the inspection allowlist')
+assert receipt_backend.calls==[] and not receipt_backend.writes and not receipt_backend.mutations
 cases=[];writes=0
 for case in ('ready','http_403','malformed_response','review_blocked'):
  b=backend()
@@ -302,7 +324,7 @@ for case in ('ready','http_403','malformed_response','review_blocked'):
   assert report['status']=='blocked' and report['ready'] is False,report
   assert report['native_diagnostic']['code']!='metadata_unavailable',report
  if case=='http_403': assert report['native_diagnostic']=={'stage':'protection','code':'http_error','http_status':403},report
- if case=='review_blocked': assert report['native_diagnostic']['stage']=='ready_facts',report
+ if case=='review_blocked': assert report['native_diagnostic']=={'stage':'ready_facts','code':'review_decision'},report
  assert not b.writes and not b.mutations
  writes+=len(b.writes)
  assert not list(out.glob('*.sqlite*'))

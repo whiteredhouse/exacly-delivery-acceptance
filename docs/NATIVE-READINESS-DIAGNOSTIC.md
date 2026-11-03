@@ -1,13 +1,31 @@
 # Read-only native readiness diagnostic
 
 The native diagnostic runtime is pinned to
-`9ef4b0adc5f61310154544c636693123fd225737`. The existing native trial and
+`bd60d9d58c44390089a435d075a77f132cb684da`. The existing native trial and
 App-grant preflight retain their original runtime pins.
 
 The first native positive trial accepted the owner's exact selection but stopped
 at the native read-only readiness check. Its retained report has no applied
 receipt, and the original hosted runner's private journal and key are gone.
 The exact failure condition was hidden by a generic error.
+
+The first [read-only diagnostic](https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/41560965600)
+reached final fact validation after 18 read attempts and returned
+`ready_facts / validation_failed`. A versioned REST comparison showed
+that GitHub's `2026-03-10` API removes `merge_commit_sha`, which the old adapter
+read as `None`. The updated runtime obtains the pending candidate through
+GraphQL `potentialMergeCommit` and the completed merge through `mergeCommit`.
+It preserves exact repository, PR, revision, tree, parent, protection and marker
+checks. The diagnostic fixture now omits the removed REST field too.
+See GitHub's [REST breaking changes](https://docs.github.com/en/rest/about-the-rest-api/breaking-changes)
+and [GraphQL pull-request fields](https://docs.github.com/en/graphql/reference/pulls).
+
+This API incompatibility is reproducible. The failed App job did not retain its
+raw response, so the version comparison does not establish that it was the only
+blocked condition in that session. New fixed readiness-check identifiers expose
+the individual rejected rule without publishing response data or exception text.
+They identify a check, such as `review_decision`, and do not invent the missing or
+rejected value. Unknown diagnostic codes remain hashed instead of echoed.
 
 `native-readiness-diagnostic` is a separate manual job on
 `codex/preflight-diagnostics`. It calls the reviewed native
