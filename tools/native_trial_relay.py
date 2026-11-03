@@ -10,12 +10,14 @@ import copy
 import datetime as dt
 import hashlib
 import hmac
+import importlib.util
 import json
 import math
 import re
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 API = "https://api.github.com"
@@ -167,8 +169,18 @@ def _decode(body):
         raise RelayStopped("invalid bounded JSON") from None
 
 
+def _protocol_module():
+    path = Path(__file__).resolve().with_name("native_trial_protocol.py")
+    _require(path.resolve() == path, "supplemental protocol source differs")
+    spec = importlib.util.spec_from_file_location("native_trial_protocol", path)
+    _require(spec is not None and spec.loader is not None, "supplemental protocol source differs")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class Relay:
-    def __init__(self, token, context, *, sender=None, clock=None, monotonic=None, sleep=None):
+    def __init__(self, token, context, *, protocol=None, sender=None, clock=None, monotonic=None, sleep=None):
         _require(isinstance(token, str) and 0 < len(token) <= 4096
                  and not any(ord(character) < 33 or ord(character) > 126 for character in token),
                  "invalid relay credential")
@@ -185,6 +197,12 @@ class Relay:
                  and context.get("workflow_ref") == REPOSITORY + "/" + WORKFLOW + "@" + REF
                  and context.get("ref") == REF and context.get("job") == JOB,
                  "invalid hosted context")
+        self._protocol_module = _protocol_module() if protocol is not None else None
+        try:
+            self.protocol = self._protocol_module.validate_protocol(protocol) if protocol is not None else None
+        except (ValueError, TypeError, KeyError):
+            raise RelayStopped("invalid supplemental protocol") from None
+        self._allocation = None
         self._token, self._sender = token, sender or transport
         self._clock = clock or (lambda: dt.datetime.now(UTC))
         self._monotonic, self._sleep = monotonic or time.monotonic, sleep or time.sleep
@@ -216,13 +234,16 @@ class Relay:
                    "created_at": _full_stamp(self._created_at),
                    "created_monotonic": self._created_monotonic,
                    "deadline_monotonic": self._deadline, "expires_at": _full_stamp(self._expires)}
+        if self.protocol is not None:
+            _require(self._allocation is not None, "supplemental allocation must be selected first")
+            payload.update(protocol=copy.deepcopy(self.protocol), allocation=copy.deepcopy(self._allocation))
         return {"payload": payload,
                 "mac": hmac.new(self._token.encode("ascii"), _canonical(payload), hashlib.sha256).hexdigest()}
 
     @classmethod
-    def restore(cls, token, context, state, *, sender=None, clock=None, monotonic=None, sleep=None):
+    def restore(cls, token, context, state, *, protocol=None, sender=None, clock=None, monotonic=None, sleep=None):
         """Restore a protected one-shot checkpoint without resetting the budget."""
-        client = cls(token, context, sender=sender, clock=clock, monotonic=monotonic, sleep=sleep)
+        client = cls(token, context, protocol=protocol, sender=sender, clock=clock, monotonic=monotonic, sleep=sleep)
         try:
             _require(isinstance(state, dict) and set(state) == {"payload", "mac"}
                      and isinstance(state["payload"], dict) and isinstance(state["mac"], str),
@@ -230,14 +251,26 @@ class Relay:
             value = state["payload"]
             expected = hmac.new(token.encode("ascii"), _canonical(value), hashlib.sha256).hexdigest()
             _require(hmac.compare_digest(expected, state["mac"]), "relay checkpoint integrity differs")
-            _require(set(value) == {"schema_version", "kind", "context", "reads", "host_checked", "phases",
-                                    "created_at", "created_monotonic", "deadline_monotonic", "expires_at"}
+            keys = {"schema_version", "kind", "context", "reads", "host_checked", "phases",
+                    "created_at", "created_monotonic", "deadline_monotonic", "expires_at"}
+            if protocol is not None:
+                keys.update(("protocol", "allocation"))
+            _require(set(value) == keys
                      and value["schema_version"] == "0.1.0" and value["kind"] == "fixed-native-relay-checkpoint"
                      and value["context"] == context and type(value["host_checked"]) is bool
                      and value["host_checked"] is True and type(value["reads"]) is int
                      and 4 <= value["reads"] <= MAX_READS
                      and value["phases"] in ([], ["merge"], ["merge", "observe"])
                      and value["reads"] >= 4 + 2 * len(value["phases"]), "invalid relay checkpoint")
+            if protocol is not None:
+                _require(value["protocol"] == client.protocol and value["reads"] >= 5,
+                         "supplemental relay checkpoint differs")
+                try:
+                    client._allocation = client._protocol_module.validate_allocation(
+                        value["allocation"], profile=client.protocol["profile"],
+                        spec=client.protocol["spec"], context=context)
+                except (ValueError, TypeError, KeyError):
+                    raise RelayStopped("supplemental relay checkpoint differs") from None
             created, expires = _full_date(value["created_at"]), _full_date(value["expires_at"])
             born, deadline = value["created_monotonic"], value["deadline_monotonic"]
             _require(type(born) in (int, float) and type(deadline) in (int, float)
@@ -267,8 +300,10 @@ class Relay:
     def _get(self, path):
         self._live()
         _require(self.reads < MAX_READS, "relay GET budget exhausted")
-        _require(isinstance(path, str) and re.fullmatch(
-            re.escape(PREFIX) + r"/(?:actions/workflows/app-bootstrap\.yml|actions/runs/[1-9][0-9]*(?:/attempts/1/jobs\?per_page=100)?|actions/workflows/[1-9][0-9]*/runs\?per_page=100&page=[1-5]|issues/5/comments\?per_page=100|issues/comments/[1-9][0-9]*)", path),
+        approvals = PREFIX + "/actions/runs/" + str(self.context["run_id"]) + "/approvals"
+        allowed_approval = self.protocol is not None and path == approvals
+        _require(isinstance(path, str) and (allowed_approval or re.fullmatch(
+            re.escape(PREFIX) + r"/(?:actions/workflows/app-bootstrap\.yml|actions/runs/[1-9][0-9]*(?:/attempts/1/jobs\?per_page=100)?|actions/workflows/[1-9][0-9]*/runs\?per_page=100&page=[1-5]|issues/5/comments\?per_page=100|issues/comments/[1-9][0-9]*)", path)),
             "request outside fixed relay scope")
         self.reads += 1
         timeout = min(10.0, self._deadline - self._monotonic(),
@@ -336,13 +371,76 @@ class Relay:
                             for rel, number in expected.items()}, "incomplete workflow history")
 
     def check_host(self):
-        """Reject any prior PR5 native trial; no new journal can reset history."""
+        """Validate initial history; the old allocation remains permanently charged."""
+        return self._verify_host(recheck=False)
+
+    def recheck_host(self):
+        """Recheck history and the retained allocation without resetting any clock or count."""
+        result = self._verify_host(recheck=True)
         try:
-            _require(not self._host_checked and not self._phases, "host check cannot restart")
+            self._review_allowance()
+            result["reads"] = self.reads
+        except Exception as error:
+            self._failed = True
+            if isinstance(error, RelayStopped):
+                raise
+            raise RelayStopped("supplemental allowance review differs") from None
+        return result
+
+    @staticmethod
+    def _owner(value):
+        return (isinstance(value, dict) and type(value.get("id")) is int
+                and value["id"] == OWNER_ID and value.get("login") == OWNER_LOGIN
+                and value.get("type") == "User")
+
+    def _supplemental_history(self, history, current):
+        accounting = self.protocol["spec"]["accounting"]
+        baseline = accounting["history_baseline"]
+        _require(isinstance(baseline, list) and len(baseline) == 11
+                 and len(history) == len(baseline) + 1
+                 and current["run_number"] == len(baseline) + 1,
+                 "supplemental dispatch allowance differs")
+        indexed = {item["run_id"]: (number, item) for number, item in enumerate(baseline, 1)}
+        _require(len(indexed) == len(baseline) and self.context["run_id"] not in indexed,
+                 "supplemental history differs")
+        found = set()
+        for item in history:
+            if item["id"] == current["id"]:
+                _require(self._owner(item.get("actor")) and self._owner(item.get("triggering_actor")),
+                         "supplemental dispatcher differs")
+                continue
+            _require(item["id"] in indexed, "unexpected supplemental workflow history")
+            number, expected = indexed[item["id"]]
+            actual = {"run_id": item["id"], "run_attempt": item["run_attempt"],
+                      "source": item["head_sha"], "title": item["display_title"],
+                      "status": item["status"], "conclusion": item["conclusion"],
+                      "workflow_id": item["workflow_id"]}
+            _require(actual == expected and item["run_number"] == number,
+                     "reviewed historical attempt differs")
+            found.add(item["id"])
+        _require(found == set(indexed), "reviewed historical attempt is missing")
+        predecessor = accounting["predecessor"]
+        prior = next(item for item in history if item["id"] == predecessor["run_id"])
+        _require(prior.get("event") == "workflow_dispatch"
+                 and prior.get("head_branch") == REF.removeprefix("refs/heads/")
+                 and self._repo(prior.get("head_repository"))
+                 and self._owner(prior.get("actor")) and self._owner(prior.get("triggering_actor")),
+                 "consumed native predecessor differs")
+
+    def _verify_host(self, *, recheck):
+        try:
+            _require(not self._failed and not self._phase_active
+                     and ((recheck and self.protocol is not None and self._host_checked
+                           and self._allocation is not None)
+                          or (not recheck and not self._host_checked and not self._phases)),
+                     "host check cannot restart")
             workflow, headers = self._get(PREFIX + "/actions/workflows/app-bootstrap.yml")
             _require(isinstance(workflow, dict) and _positive(workflow.get("id"))
                      and workflow.get("path") == WORKFLOW and workflow.get("state") == "active"
                      and not headers.get("link"), "workflow identity is unavailable")
+            if self.protocol is not None:
+                _require(workflow["id"] == self.protocol["spec"]["accounting"]["predecessor"]["workflow_id"],
+                         "supplemental workflow differs")
             run, headers = self._get(PREFIX + "/actions/runs/" + str(self.context["run_id"]))
             _require(not headers.get("link"), "current hosted run differs")
             self._run(run, workflow["id"], current=True)
@@ -373,9 +471,13 @@ class Relay:
                     self._run(item, workflow["id"], current=True)
                     _require(item["run_number"] == run["run_number"], "current workflow history changed")
                     current.append(item)
-                else:
+                elif self.protocol is None:
                     _require(item["display_title"] != TITLE, "a native PR5 trial already exists")
             _require(len(current) == 1, "current run is absent from workflow history")
+            if self.protocol is not None:
+                _require(self._owner(run.get("actor")) and self._owner(run.get("triggering_actor")),
+                         "supplemental dispatcher differs")
+                self._supplemental_history(history, run)
             jobs, headers = self._get(PREFIX + "/actions/runs/" + str(run["id"])
                                       + "/attempts/1/jobs?per_page=100")
             _require(isinstance(jobs, dict) and type(jobs.get("total_count")) is int
@@ -402,6 +504,48 @@ class Relay:
             if isinstance(error, RelayStopped):
                 raise
             raise RelayStopped("host verification failed") from None
+
+    def _review_allowance(self):
+        _require(self.protocol is not None and self._host_checked and not self._failed,
+                 "supplemental host must be verified first")
+        reviews, headers = self._get(PREFIX + "/actions/runs/" + str(self.context["run_id"]) + "/approvals")
+        _require(isinstance(reviews, list) and len(reviews) == 1 and not headers.get("link"),
+                 "supplemental approval inventory differs")
+        review = reviews[0]
+        _require(isinstance(review, dict) and review.get("state") == "approved"
+                 and self._owner(review.get("user")), "supplemental allocation is not owner approved")
+        environments = review.get("environments")
+        _require(isinstance(environments, list) and len(environments) == 1
+                 and isinstance(environments[0], dict)
+                 and type(environments[0].get("id")) is int and environments[0]["id"] == 26032127012
+                 and environments[0].get("name") == "canary-merger-diagnostic",
+                 "supplemental approval environment differs")
+        command = self._protocol_module.allowance_command(self.protocol, self.context)
+        _require(isinstance(review.get("comment"), str) and review["comment"].strip(" \t\r\n") == command, "exact supplemental approval comment is required")
+        return command
+
+    def check_supplemental_allowance(self):
+        """Observe the owner's explicit added allocation before creating native state."""
+        try:
+            _require(self.protocol is not None and self._allocation is None and not self._phases,
+                     "supplemental allocation cannot restart")
+            command = self._review_allowance()
+            receipt = {"schema_version": "0.1.0", "kind": "owner-approved-supplemental-native-allocation",
+                       "status": "approved", "context": copy.deepcopy(self.context),
+                       "accounting": copy.deepcopy(self.protocol["spec"]["accounting"]),
+                       "accounting_digest": self.protocol["profile"]["accounting_digest"],
+                       "reviewer_id": OWNER_ID, "environment_id": 26032127012,
+                       "command": command,
+                       "command_digest": "sha256:" + hashlib.sha256(command.encode("ascii")).hexdigest(),
+                       "observed_at": _full_stamp(self._clock())}
+            self._allocation = self._protocol_module.validate_allocation(
+                receipt, profile=self.protocol["profile"], spec=self.protocol["spec"], context=self.context)
+            return copy.deepcopy(self._allocation)
+        except Exception as error:
+            self._failed = True
+            if isinstance(error, RelayStopped):
+                raise
+            raise RelayStopped("supplemental allowance verification failed") from None
 
     def _comment(self, value, body, start):
         _require(isinstance(value, dict) and _positive(value.get("id")), "invalid selected comment")

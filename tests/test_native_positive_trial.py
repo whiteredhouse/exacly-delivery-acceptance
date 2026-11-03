@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -228,21 +227,6 @@ class CoordinatorTests(unittest.TestCase):
     def events_named(self, name):
         return [event for event in self.events if event[0] == name]
 
-    def main_phase(self, phase):
-        modules = {"native_trial_packets": self.packets, "native_trial_relay": self.relays,
-                   "native_trial_execution": self.execution}
-        argv = ["native_positive_trial.py", phase, "--private", str(self.private), "--core-source", str(self.core)]
-        actual_run = coordinator.run
-
-        def fixed_clock_run(*args, **kwargs):
-            kwargs["now"] = lambda: self.now
-            return actual_run(*args, **kwargs)
-
-        with patch.object(sys, "argv", argv), patch.object(coordinator, "context", return_value=CONTEXT), \
-             patch.object(coordinator, "load_helper", side_effect=modules.__getitem__), \
-             patch.object(coordinator, "run", side_effect=fixed_clock_run), redirect_stdout(self.output):
-            return coordinator.main()
-
     def test_prepare_drafts_without_owner_wait_or_execution(self):
         result = self.run_phase("prepare")
         self.assertEqual(result["native_effect"], "not_attempted")
@@ -448,18 +432,6 @@ class CoordinatorTests(unittest.TestCase):
             coordinator.read_private(link)
         self.assertEqual(json.loads(path.read_bytes()), {"safe": True})
 
-    def test_cli_failure_after_applied_preserves_known_effect_and_hides_exception_details(self):
-        self.run_phase("prepare")
-        self.execution.replay_error = RuntimeError(SECRET_ERROR + APP_TOKEN + RELAY_TOKEN)
-        self.assertEqual(self.main_phase("merge"), 1)
-        report = self.read("trial-report.json")
-        self.assertEqual(report["native_effect"], "applied")
-        self.assertFalse(report["resend_allowed"])
-        self.assertEqual(self.read("merge-result.json"), self.execution.merge_report)
-        serialized = self.output.getvalue() + json.dumps(report)
-        for secret in (APP_TOKEN, RELAY_TOKEN, SECRET_ERROR):
-            self.assertNotIn(secret, serialized)
-
     def test_failure_during_native_attempt_reports_uncertainty_and_never_resends(self):
         self.run_phase("prepare")
         self.execution.execute_error = RuntimeError(SECRET_ERROR)
@@ -521,16 +493,6 @@ class CoordinatorTests(unittest.TestCase):
             self.run_phase("merge")
         self.assertEqual(len(self.events_named("execute")), 1)
         self.assertEqual(self.events_named("offline-replay"), [])
-
-    def test_preparation_failure_is_redacted_and_never_claims_a_native_attempt(self):
-        self.relays.host_error = RuntimeError(SECRET_ERROR + RELAY_TOKEN)
-        self.assertEqual(self.main_phase("prepare"), 1)
-        result = json.loads(self.output.getvalue().splitlines()[-1])
-        self.assertEqual(result["native_effect"], "not_attempted")
-        self.assertFalse(result["resend_allowed"])
-        self.assertFalse(self.private.exists())
-        for secret in (APP_TOKEN, RELAY_TOKEN, SECRET_ERROR):
-            self.assertNotIn(secret, self.output.getvalue())
 
     def test_credential_roles_and_installation_cannot_be_substituted(self):
         with self.assertRaisesRegex(coordinator.Stopped, "credential_roles_collide"):

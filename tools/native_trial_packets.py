@@ -10,13 +10,14 @@ import copy
 import datetime as dt
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import stat
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 CORE_REVISION = "9a5cd90b8d3c3b2acc2a00e7e68e175558025432"
@@ -36,10 +37,12 @@ SAFE_NAMES = frozenset(("merge-proposal.json", "observer-proposal.json", "merge-
 PRIVATE_NAMES = frozenset(("merge-config.json", "merge-policy.json", "merge-request.json", "merge-payload.json",
                            "merge-approval.json", "mint-identity-proposal.json", "mint-attestation.json",
                            "objective.json", "limits.json", "native-limits.json", "merge-proposal.json",
-                           "prepared-state.json", "observer-packet.json", "observer-proposal.json", "observer-state.json"))
+                           "prepared-state.json", "observer-packet.json", "observer-proposal.json", "observer-state.json",
+                           "supplemental-allocation.json"))
 DOCUMENT_KEYS = ("config", "policy", "request", "payload", "approval", "identity", "mint", "objective", "limits", "native_limits")
 PROPOSAL_KEYS = dict(zip(DOCUMENT_KEYS, ("configuration", "policy", "request", "payload", "operation_approval",
                                         "identity_decision", "mint_attestation", "objective", "limits", "native_limits")))
+PROPOSAL_KEYS["allocation"] = "supplemental_allocation"
 
 
 class Refused(ValueError):
@@ -57,6 +60,50 @@ def _encoded(value):
 
 def digest(value):
     return "sha256:" + hashlib.sha256(_encoded(value)).hexdigest()
+
+
+def _protocol():
+    path = Path(__file__).resolve().with_name("native_trial_protocol.py")
+    require(path.resolve() == path)
+    loaded = importlib.util.spec_from_file_location("native_trial_protocol", path)
+    require(loaded is not None and loaded.loader is not None)
+    module = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(module)
+    return module
+
+
+def _settings(profile):
+    if profile is None:
+        return {"core_revision": CORE_REVISION, "spec_digest": SPEC_DIGEST, "native_pins": NATIVE_PINS}
+    selected = _protocol().load(Path(__file__).resolve().parent.parent)["profile"]
+    require(type(profile) is dict and profile == selected)
+    return copy.deepcopy(selected)
+
+
+def _allocation(allocation, *, profile, spec, context):
+    if profile is None:
+        require(allocation is None)
+        return None
+    settings = _settings(profile)
+    try:
+        checked = _protocol().validate_allocation(allocation, profile=settings, spec=spec, context=context)
+    except ValueError:
+        raise Refused("native trial supplemental allocation refused") from None
+    require(type(checked) is dict and checked == allocation)
+    return copy.deepcopy(checked)
+
+
+def _check_allocation(prepared, profile):
+    proposal = prepared["proposal"]
+    if profile is None:
+        require(not ({"runtime_profile", "supplemental_allocation"} & set(prepared))
+                and not ({"runtime_profile", "supplemental_allocation"} & set(proposal)))
+        return
+    settings = _settings(profile)
+    require(prepared.get("runtime_profile") == proposal.get("runtime_profile") == settings)
+    checked = _allocation(prepared.get("supplemental_allocation"), profile=profile,
+                          spec=prepared["spec"], context=prepared["context"])
+    require(proposal.get("supplemental_allocation") == checked)
 
 
 def _utc(now):
@@ -142,8 +189,8 @@ def _git(source, *arguments):
                    "GIT_NO_REPLACE_OBJECTS": "1", "GIT_NO_LAZY_FETCH": "1", "GIT_GRAFT_FILE": os.devnull}
     result = subprocess.run(["git", "--no-optional-locks", "-c", "core.hooksPath=" + os.devnull,
                              "-c", "core.fsmonitor=false", "-C", str(source), *arguments],
-                            env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=10, check=False)
+                            env=environment, stdin=subprocess.DEVNULL, capture_output=True,
+                            timeout=10, check=False)
     require(result.returncode == 0 and len(result.stdout) <= 4 * MAX_DOCUMENT)
     return result.stdout
 
@@ -161,14 +208,16 @@ def _source_bytes(path):
         os.close(descriptor)
 
 
-def _load_native(source):
+def _load_native(source, *, profile=None):
     """Verify the exact package checkout before importing any of its code."""
     require(isinstance(source, Path) and source.is_absolute() and source.resolve() == source)
-    require(_git(source, "rev-parse", "--verify", "HEAD").strip().decode("ascii") == CORE_REVISION)
+    settings = _settings(profile)
+    revision, pins = settings["core_revision"], settings["native_pins"]
+    require(_git(source, "rev-parse", "--verify", "HEAD").strip().decode("ascii") == revision)
     package = source / "python/src/exacly"
     inventory = []
     expected_paths = set()
-    for line in _git(source, "ls-tree", "-r", "--full-tree", CORE_REVISION, "--", "python/src/exacly").decode().splitlines():
+    for line in _git(source, "ls-tree", "-r", "--full-tree", revision, "--", "python/src/exacly").decode().splitlines():
         metadata, relative = line.split("\t", 1)
         mode, kind, oid = metadata.split()
         require(kind == "blob" and mode in ("100644", "100755") and re.fullmatch(r"[0-9a-f]{40}", oid))
@@ -179,7 +228,7 @@ def _load_native(source):
         inventory.append({"path": relative, "sha256": hashlib.sha256(content).hexdigest()})
     actual_paths = {path for path in package.rglob("*") if path.is_file() and "__pycache__" not in path.parts}
     require(expected_paths and actual_paths == expected_paths)
-    for name, expected in NATIVE_PINS.items():
+    for name, expected in pins.items():
         require(hashlib.sha256(_source_bytes(package / name)).hexdigest() == expected)
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(source / "python/src"))
@@ -199,8 +248,8 @@ def _load_native(source):
     return SimpleNamespace(**modules, source_inventory_digest=digest(inventory))
 
 
-def _inputs(spec, context, token, installation_id, now):
-    require(isinstance(spec, dict) and digest(spec) == SPEC_DIGEST)
+def _inputs(spec, context, token, installation_id, now, *, profile=None):
+    require(isinstance(spec, dict) and digest(spec) == _settings(profile)["spec_digest"])
     require(isinstance(context, dict) and set(context) == {"repository", "repository_id", "source", "run_id", "run_attempt", "workflow_ref", "ref", "job"})
     require(context["repository"] == spec["repository"]["full_name"] and type(context["repository_id"]) is int
             and context["repository_id"] == spec["repository"]["id"])
@@ -240,10 +289,12 @@ def _selection(phase, context, packet, approval, *, identity=None):
     return selected
 
 
-def prepare(private_dir, spec, context, core_source, token, installation_id, *, now):
+def prepare(private_dir, spec, context, core_source, token, installation_id, *, now, profile=None, allocation=None):
     """Create actual storage and complete drafts, with no provider or approval activity."""
-    _inputs(spec, context, token, installation_id, now)
-    native = _load_native(core_source)
+    _inputs(spec, context, token, installation_id, now, profile=profile)
+    allocation = _allocation(allocation, profile=profile, spec=spec, context=context)
+    settings = _settings(profile)
+    native = _load_native(core_source, profile=profile)
     spec, context = copy.deepcopy(spec), copy.deepcopy(context)
     require(core_source not in private_dir.parents and private_dir != core_source
             and Path(__file__).resolve().parent.parent not in private_dir.parents)
@@ -252,6 +303,8 @@ def prepare(private_dir, spec, context, core_source, token, installation_id, *, 
              "policy": "merge-policy.json", "request": "merge-request.json", "payload": "merge-payload.json",
              "approval": "merge-approval.json", "identity": "mint-identity-proposal.json", "mint": "mint-attestation.json",
              "objective": "objective.json", "limits": "limits.json", "native_limits": "native-limits.json", "proposal": "merge-proposal.json"}
+    if profile is not None:
+        names["allocation"] = "supplemental-allocation.json"
     paths = {key: str(private_dir / name) for key, name in names.items()}
     key_id = native.delivery_key.initialize(Path(paths["key"]))
     native_limits = copy.deepcopy(spec["call_limits"]["invoke"])
@@ -264,7 +317,7 @@ def prepare(private_dir, spec, context, core_source, token, installation_id, *, 
     mint = {
         "schema_version": "0.1.0", "kind": "trusted-github-actions-mint-run-attestation",
         "basis": "reviewed workflow/action inputs and observed installation-id output; not a retained mint API response",
-        "context": context, "repository": spec["repository"], "exacly_source_commit": CORE_REVISION,
+        "context": context, "repository": spec["repository"], "exacly_source_commit": settings["core_revision"],
         "mint_action": ACTION, "app_id": spec["app_id"], "installation_id": installation_id,
         "requested_repository_ids": [spec["repository"]["id"]], "requested_permissions": PERMISSIONS,
         "token_digest": "sha256:" + hashlib.sha256(token.encode()).hexdigest(), "attested_at": _utc(now),
@@ -312,6 +365,8 @@ def prepare(private_dir, spec, context, core_source, token, installation_id, *, 
     importlib.import_module("jsonschema").validate(approval, native.delivery_automation.APPROVAL_SCHEMA)
     documents = dict(zip(DOCUMENT_KEYS, (configuration, policy, request, payload, approval, identity, mint,
                                        spec["objective"], spec["limits"], native_limits)))
+    if profile is not None:
+        documents["allocation"] = allocation
     for key, value in documents.items():
         _write(Path(paths[key]), value, token)
     python = str(Path(sys.executable).absolute())
@@ -319,10 +374,10 @@ def prepare(private_dir, spec, context, core_source, token, installation_id, *, 
         "schema_version": "0.1.0", "kind": "proposed-native-positive-trial", "status": "proposed",
         "authority_granted": False, "independent_mint_approval": False, "pr_readiness_verified": False,
         "merge_authority": False, "context": context, "spec_digest": digest(spec), "retention": spec["retention"],
-        "core": {"revision": CORE_REVISION, "source": str(core_source), "python": python,
+        "core": {"revision": settings["core_revision"], "source": str(core_source), "python": python,
                  "python_realpath": str(Path(python).resolve()),
                  "python_sha256": hashlib.sha256(Path(python).read_bytes()).hexdigest(),
-                 "source_inventory_digest": native.source_inventory_digest, "source_pins": NATIVE_PINS},
+                 "source_inventory_digest": native.source_inventory_digest, "source_pins": settings["native_pins"]},
         "storage": {"private_dir": str(private_dir), "journal": {**journal, "device": current.st_dev, "inode": current.st_ino},
                     "key": {**configuration["key"], "device": key_info.st_dev, "inode": key_info.st_ino,
                             "owner": key_info.st_uid, "mode": stat.S_IMODE(key_info.st_mode)}},
@@ -330,23 +385,31 @@ def prepare(private_dir, spec, context, core_source, token, installation_id, *, 
         **{PROPOSAL_KEYS[key]: value for key, value in documents.items()},
         "documents": {key: {"path": paths[key], "digest": digest(value)} for key, value in documents.items()},
     }
+    if profile is not None:
+        proposal["runtime_profile"] = settings
     _write(Path(paths["proposal"]), proposal, token)
     prepared = {"proposal": proposal, "selection": _selection("merge", context, proposal, approval, identity=identity),
                 "paths": paths, "journal_id": initialized["id"], "core_source": str(core_source), "context": context,
                 "spec": spec, "private_dir": str(private_dir), "python": python, "_token": token}
+    if profile is not None:
+        prepared.update(runtime_profile=copy.deepcopy(settings), supplemental_allocation=copy.deepcopy(allocation))
     return prepared
 
 
-def _check_prepared(prepared, token, native):
+def _check_prepared(prepared, token, native, *, profile=None):
+    _check_allocation(prepared, profile)
+    settings = _settings(profile)
     proposal, paths = prepared["proposal"], prepared["paths"]
     require(proposal["schema_version"] == "0.1.0" and proposal["kind"] == "proposed-native-positive-trial"
             and proposal["status"] == "proposed" and all(proposal[name] is False for name in
                 ("authority_granted", "independent_mint_approval", "pr_readiness_verified", "merge_authority")))
     _inputs(prepared["spec"], prepared["context"], token, prepared["spec"]["installation_id"],
-            dt.datetime.fromisoformat(proposal["configuration"]["actor"]["grant"]["not_before"].replace("Z", "+00:00")))
+            dt.datetime.fromisoformat(proposal["configuration"]["actor"]["grant"]["not_before"]),
+            profile=profile)
     require(proposal["context"] == prepared["context"] and proposal["spec_digest"] == digest(prepared["spec"]))
-    require(proposal["core"]["source"] == prepared["core_source"] and proposal["core"]["revision"] == CORE_REVISION
+    require(proposal["core"]["source"] == prepared["core_source"] and proposal["core"]["revision"] == settings["core_revision"]
             and proposal["core"]["source_inventory_digest"] == native.source_inventory_digest)
+    require(proposal["core"]["source_pins"] == settings["native_pins"])
     require(prepared["python"] == str(Path(sys.executable).absolute()) == proposal["core"]["python"]
             and str(Path(prepared["python"]).resolve()) == proposal["core"]["python_realpath"]
             and hashlib.sha256(Path(prepared["python"]).read_bytes()).hexdigest() == proposal["core"]["python_sha256"])
@@ -359,8 +422,9 @@ def _check_prepared(prepared, token, native):
             and selection["run_id"] == prepared["context"]["run_id"] and selection["run_attempt"] == 1
             and re.fullmatch(r"[0-9a-f]{64}", selection["challenge"]))
     private = Path(prepared["private_dir"])
-    require(proposal["storage"]["private_dir"] == str(private) and set(proposal["documents"]) == set(DOCUMENT_KEYS))
-    for key in DOCUMENT_KEYS:
+    document_keys = DOCUMENT_KEYS + (("allocation",) if profile is not None else ())
+    require(proposal["storage"]["private_dir"] == str(private) and set(proposal["documents"]) == set(document_keys))
+    for key in document_keys:
         require(Path(paths[key]).parent == private and proposal["documents"][key]["path"] == paths[key])
         actual = _read(Path(paths[key]))
         require(actual == proposal[PROPOSAL_KEYS[key]] and digest(actual) == proposal["documents"][key]["digest"])
@@ -389,7 +453,8 @@ def _check_prepared(prepared, token, native):
 
 def save_private(prepared):
     """Persist only canonical non-secret state; never serialize the private token."""
-    require(set(prepared) <= {"proposal", "selection", "paths", "journal_id", "core_source", "context", "spec", "private_dir", "python", "_token", "observer"})
+    require(set(prepared) <= {"proposal", "selection", "paths", "journal_id", "core_source", "context", "spec", "private_dir", "python", "_token", "observer",
+                              "runtime_profile", "supplemental_allocation"})
     state = {key: value for key, value in prepared.items() if key not in ("_token", "observer")}
     path = Path(prepared["private_dir"]) / "prepared-state.json"
     if path.exists():
@@ -399,13 +464,14 @@ def save_private(prepared):
     return path
 
 
-def restore(private_dir, core_source, token):
+def restore(private_dir, core_source, token, *, profile=None):
     """Resume only original same-job storage and actual unchanged installed profile."""
-    native = _load_native(core_source)
     prepared = _read(private_dir / "prepared-state.json")
+    _check_allocation(prepared, profile)
+    native = _load_native(core_source, profile=profile)
     require(prepared["private_dir"] == str(private_dir) and prepared["core_source"] == str(core_source))
     prepared["_token"] = token
-    history = _check_prepared(prepared, token, native)
+    history = _check_prepared(prepared, token, native, profile=profile)
     observer_path = private_dir / "observer-state.json"
     if observer_path.exists():
         observer = _read(observer_path)
@@ -441,11 +507,12 @@ def _check_observer(prepared, observer, history, native):
     jsonschema.validate(packet, native.automatic_merge_live.PACKET)
 
 
-def build_observer(prepared, applied_report, *, now):
+def build_observer(prepared, applied_report, *, now, profile=None):
     """Draft separate read authority from the real original applied journal only."""
     _utc(now)
-    native = _load_native(Path(prepared["core_source"]))
-    history = _check_prepared(prepared, prepared["_token"], native)
+    _check_allocation(prepared, profile)
+    native = _load_native(Path(prepared["core_source"]), profile=profile)
+    history = _check_prepared(prepared, prepared["_token"], native, profile=profile)
     proposal = prepared["proposal"]
     operation = history.get("operation")
     require(isinstance(applied_report, dict) and applied_report.get("status") == "applied"
@@ -470,7 +537,7 @@ def build_observer(prepared, applied_report, *, now):
     native.automatic_merge.validate_ready_facts(proposal["request"], proposal["payload"], proposal["configuration"], proposal["policy"], facts)
     configuration, policy = proposal["configuration"], proposal["policy"]
     native.automatic_merge.validate_installation_grant_time(configuration["actor"], now=now)
-    end = dt.datetime.fromisoformat(configuration["actor"]["grant"]["not_after"].replace("Z", "+00:00"))
+    end = dt.datetime.fromisoformat(configuration["actor"]["grant"]["not_after"])
     require(now < end)
     read = {"schema_version": "0.1.0", "profile": "product-delivery-v1", "kind": "delivery-read-recovery",
             "issuer": "p1c2u", "approval_id": "native-positive-observe-" + str(prepared["context"]["run_id"]) + "-1",

@@ -35,7 +35,8 @@ CONTEXT = {
 # This fixture uses real native schemas, key/journal storage and marker proofs.
 # Its HTTP provider is explicitly controlled and supplies no live acceptance.
 NATIVE_INTEGRATION = r'''
-import copy, datetime as dt, importlib.util, json, os, shutil, stat, subprocess, sys, time
+import contextlib, copy, datetime as dt, importlib.util, io, json, os, shutil, stat, subprocess, sys, time
+from unittest.mock import patch
 from pathlib import Path
 helper_path, core, spec_path, private = map(Path, sys.argv[1:])
 sys.path.insert(0, str(core / 'python/src'))
@@ -62,7 +63,27 @@ def forbid_network(event, args):
   raise AssertionError('local packet preparation attempted provider activity')
 sys.addaudithook(forbid_network)
 now = dt.datetime.now(dt.timezone.utc)
-prepared = packets.prepare(private, spec, context, core, token, spec['installation_id'], now=now)
+supplemental = spec.get('kind') == 'fixed-native-supplemental-trial'
+if supplemental:
+ from test_delivery_cli import SharedMapping, SharedSequence
+ from exacly import delivery_io
+ from exacly.cli import exacly_main
+profile_args, prepare_args = {}, {}
+if supplemental:
+ protocol_loader = importlib.util.spec_from_file_location('native_trial_protocol', helper_path.with_name('native_trial_protocol.py'))
+ protocol_module = importlib.util.module_from_spec(protocol_loader)
+ protocol_loader.loader.exec_module(protocol_module)
+ protocol = protocol_module.load(helper_path.parents[1])
+ profile_args = {'profile': protocol['profile']}
+ command = protocol_module.allowance_command(protocol, context)
+ allocation = {'schema_version': '0.1.0', 'kind': 'owner-approved-supplemental-native-allocation',
+               'status': 'approved', 'context': context, 'accounting': spec['accounting'],
+               'accounting_digest': protocol['profile']['accounting_digest'],
+               'reviewer_id': 1679024, 'environment_id': 26032127012,
+               'command': command, 'command_digest': 'sha256:' + __import__('hashlib').sha256(command.encode()).hexdigest(),
+               'observed_at': now.isoformat(timespec='microseconds').replace('+00:00', 'Z')}
+ prepare_args = {**profile_args, 'allocation': allocation}
+prepared = packets.prepare(private, spec, context, core, token, spec['installation_id'], now=now, **prepare_args)
 proposal, selection, paths = prepared['proposal'], prepared['selection'], prepared['paths']
 assert proposal['status'] == 'proposed' and proposal['authority_granted'] is False
 assert selection['packet_digest'] == packets.digest(proposal)
@@ -138,7 +159,7 @@ assert packets.save_private(prepared) == state_path and state_path.read_bytes() 
 restore_code = """
 import importlib.util, json, os, sys
 from pathlib import Path
-source, core, private = map(Path, sys.argv[1:])
+source, core, private, spec_path = map(Path, sys.argv[1:])
 def forbid(event, args):
  if event.startswith('socket.'):
   raise AssertionError('restore attempted provider activity')
@@ -146,21 +167,27 @@ sys.addaudithook(forbid)
 loader = importlib.util.spec_from_file_location('native_trial_packets', source)
 packets = importlib.util.module_from_spec(loader)
 loader.loader.exec_module(packets)
-restored = packets.restore(private, core, os.environ['EXACLY_DELIVERY_MERGE_TOKEN'])
+profile_args = {}
+if spec_path.name == 'native-supplemental-trial.json':
+ protocol_loader = importlib.util.spec_from_file_location('native_trial_protocol', source.with_name('native_trial_protocol.py'))
+ protocol_module = importlib.util.module_from_spec(protocol_loader)
+ protocol_loader.loader.exec_module(protocol_module)
+ profile_args = {'profile': protocol_module.load(source.parents[1])['profile']}
+restored = packets.restore(private, core, os.environ['EXACLY_DELIVERY_MERGE_TOKEN'], **profile_args)
 print(json.dumps({'journal_id': restored['journal_id'], 'packet_digest': restored['selection']['packet_digest'],
                   'observer_present': 'observer' in restored}))
 """
 restore_environment = dict(os.environ)
 restore_environment['EXACLY_DELIVERY_MERGE_TOKEN'] = token
 restored_process = subprocess.run([sys.executable, '-I', '-B', '-c', restore_code,
- str(helper_path), str(core), str(private)], env=restore_environment, stdin=subprocess.DEVNULL,
+ str(helper_path), str(core), str(private), str(spec_path)], env=restore_environment, stdin=subprocess.DEVNULL,
  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
 assert restored_process.returncode == 0, restored_process.stderr.decode()
 assert json.loads(restored_process.stdout) == {
  'journal_id': prepared['journal_id'], 'packet_digest': selection['packet_digest'], 'observer_present': False}
 before_restore_checks = Path(paths['journal']).read_bytes()
 try:
- packets.restore(private, core, token + '-other')
+ packets.restore(private, core, token + '-other', **profile_args)
 except Exception:
  pass
 else:
@@ -173,7 +200,7 @@ changed_config['actor']['grant']['permissions']['statuses'] = 'write'
 config_path.write_text(json.dumps(changed_config, sort_keys=True, ensure_ascii=False, separators=(',', ':')))
 try:
  try:
-  packets.restore(private, core, token)
+  packets.restore(private, core, token, **profile_args)
  except Exception:
   pass
  else:
@@ -190,7 +217,7 @@ journal_path.chmod(0o600)
 assert journal_path.stat().st_ino != original_inode
 try:
  try:
-  packets.restore(private, core, token)
+  packets.restore(private, core, token, **profile_args)
  except Exception:
   pass
  else:
@@ -206,7 +233,7 @@ withheld_key = private / 'withheld-key-for-controlled-test'
 key_path.rename(withheld_key)
 try:
  try:
-  packets.restore(private, core, token)
+  packets.restore(private, core, token, **profile_args)
  except Exception:
   pass
  else:
@@ -222,7 +249,7 @@ key_path.chmod(0o600)
 assert key_path.stat().st_ino != original_key_inode
 try:
  try:
-  packets.restore(private, core, token)
+  packets.restore(private, core, token, **profile_args)
  except Exception:
   pass
  else:
@@ -236,7 +263,7 @@ previous_proxy = os.environ.get('https_proxy')
 os.environ['https_proxy'] = 'http://controlled-runtime-change.invalid:8888'
 try:
  try:
-  packets.restore(private, core, token)
+  packets.restore(private, core, token, **profile_args)
  except Exception:
   pass
  else:
@@ -270,54 +297,109 @@ opener.trees = {spec[revision]: [
  for item in spec['protected_files']]
  for revision, phase in (('base_revision', 'before'), ('head_revision', 'after'))}
 original_respond = opener.respond
+read_queries = (github_merge.READ_QUERY, github_merge.UNSTABLE_QUERY)
+if supplemental:
+ read_queries += (github_merge.MERGE_RECEIPT_QUERY,)
+ assert 'merge_commit_sha' not in opener.respond('GET', fixture.PREFIX + '/pulls/42', None)
 def controlled_response(method, path, body):
  # The reusable fixture's query assertions retain its original symbolic PR.
  # Translate only that local assertion boundary, never the actual HTTP request.
  selected = copy.deepcopy(body)
  selected_path = fixture.PREFIX + '/pulls/42' if path == fixture.PREFIX + '/pulls/' + str(spec['pull_request']) else path
- if method == 'POST' and path == '/graphql' and body['query'] in (github_merge.READ_QUERY, github_merge.UNSTABLE_QUERY):
+ if method == 'POST' and path == '/graphql' and body['query'] in read_queries:
   selected['variables'].update(owner='owner', name='product', number=42)
  response = original_respond(method, selected_path, selected)
- if method == 'POST' and path == '/graphql' and body['query'] in (github_merge.READ_QUERY, github_merge.UNSTABLE_QUERY):
+ if method == 'POST' and path == '/graphql' and body['query'] in read_queries:
   response['data']['repository']['databaseId'] = spec['repository']['id']
+ if supplemental and method == 'GET' and selected_path == fixture.PREFIX + '/pulls/42':
+  assert 'merge_commit_sha' not in response
  return response
 opener.respond = controlled_response
+if supplemental:
+ provider = private.parent / 'controlled-provider-state'
+ provider.mkdir(mode=0o700)
+ for name in ('refs', 'pull_request', 'tags'):
+  setattr(opener, name, SharedMapping(provider / (name + '.json'), getattr(opener, name)))
+ for name in ('calls', 'mutations'):
+  setattr(opener, name, SharedSequence(provider / (name + '.json'), getattr(opener, name)))
 assert delivery.digest(automatic_merge.protection_snapshot(opener.protection)) == policy['protection_digest']
 adapter = github_merge.GitHubMergeAdapter(config, policy, opener=opener)
 engine = DeliveryEngine(Path(paths['journal']), journal_id=prepared['journal_id'], adapter_factory=lambda: adapter)
 before_preview = Path(paths['journal']).read_bytes()
 advisory = engine.preview(request, payload)
 assert advisory['status'] == 'approval_required' and advisory['live_checked'] is False
-assert Path(paths['journal']).read_bytes() == before_preview and opener.calls == []
+assert Path(paths['journal']).read_bytes() == before_preview and list(opener.calls) == []
 
 # Purely controlled authorization: no external approval or live effect is claimed.
 pin = delivery.ApprovalPin(approval['issuer'], approval['approval_id'], delivery.digest(approval))
-intent = engine.preview(request, payload, approval=approval, pin=pin)['packet']['intent']
 os.environ['EXACLY_DELIVERY_MERGE_TOKEN'] = token
-result = adapter.invoke(intent, payload, approval, deadline=execution_store.Deadline(120))
-assert result['outcome'] == 'applied'
+if supplemental:
+ execution_loader = importlib.util.spec_from_file_location('native_trial_execution', helper_path.with_name('native_trial_execution.py'))
+ execution = importlib.util.module_from_spec(execution_loader)
+ execution_loader.loader.exec_module(execution)
+ execution._integrity(prepared, **profile_args)
+ arguments = execution._arguments(prepared, selection)
+ def public_cli():
+  output = io.StringIO()
+  with contextlib.redirect_stdout(output):
+   try:
+    code = exacly_main(arguments)
+   except SystemExit as error:
+    code = error.code
+  assert code == 0
+  return json.loads(output.getvalue())
+ with patch.object(delivery_io, 'merge_adapter', return_value=adapter):
+  applied = public_cli()
+ assert applied['status'] == 'applied' and applied['live_checked'] is True and applied['historical'] is False
+ intent, receipt = applied['intent'], applied['receipt']
+ assert receipt['effect']['commit'] == spec['merge_revision']
+ operation = delivery_store.show(Path(paths['journal']), prepared['journal_id'], spec['operation_key'])['operation']
+ result = operation['calls'][-1]['result']
+ assert [call['method'] for call in operation['calls']] == ['inspect', 'invoke']
+ assert result['outcome'] == 'applied'
+ saved = Path(paths['journal']).read_bytes()
+ old_calls = len(opener.calls)
+ actual_key = Path(paths['key'])
+ withheld_key = private / 'public-cli-replay-withheld-key'
+ key_inode = actual_key.stat().st_ino
+ actual_key.rename(withheld_key)
+ os.environ.pop('EXACLY_DELIVERY_MERGE_TOKEN')
+ try:
+  with patch.object(delivery_io, 'merge_adapter', side_effect=AssertionError('historical replay acquired adapter')):
+   replay = public_cli()
+  assert replay['historical'] is True and replay['receipt'] == receipt
+  assert Path(paths['journal']).read_bytes() == saved and len(opener.calls) == old_calls
+ finally:
+  withheld_key.rename(actual_key)
+  os.environ['EXACLY_DELIVERY_MERGE_TOKEN'] = token
+ assert actual_key.stat().st_ino == key_inode
+else:
+ intent = engine.preview(request, payload, approval=approval, pin=pin)['packet']['intent']
+ result = adapter.invoke(intent, payload, approval, deadline=execution_store.Deadline(120))
+ assert result['outcome'] == 'applied'
+ receipt = engine._receipt(intent, result)
+ with delivery_store.opened(Path(paths['journal']), prepared['journal_id'], write=True) as retained:
+  retained.prepare(intent, payload, approval, pin, now)
+  call = retained.reserve_call(request['operation_key'], 'invoke', adapter.call_limits['invoke'], approval, pin, now)
+  retained.update_call(request['operation_key'], call['id'], lambda item: item.update(
+   owner={'process': executor_runtime.identity(os.getpid()), 'deadline_monotonic': time.monotonic() + 120}, cleanup=True))
+  operation = retained.finish_call(request['operation_key'], call['id'], result, receipt)
+ applied = engine._report(request, 'applied', result['reason'], operation=operation, live_checked=True)
 assert result['provenance']['facts']['preflight']['review']['mergeStateStatus'] == 'UNSTABLE'
-assert len(opener.calls) - len(opener.writes) == 40 and len(opener.writes) == 2
-receipt = engine._receipt(intent, result)
-with delivery_store.opened(Path(paths['journal']), prepared['journal_id'], write=True) as retained:
- retained.prepare(intent, payload, approval, pin, now)
- call = retained.reserve_call(request['operation_key'], 'invoke', adapter.call_limits['invoke'], approval, pin, now)
- retained.update_call(request['operation_key'], call['id'], lambda item: item.update(
-  owner={'process': executor_runtime.identity(os.getpid()), 'deadline_monotonic': time.monotonic() + 120}, cleanup=True))
- operation = retained.finish_call(request['operation_key'], call['id'], result, receipt)
-applied = engine._report(request, 'applied', result['reason'], operation=operation, live_checked=True)
+expected_reads = 58 if supplemental else 40
+assert len(opener.calls) - len(opener.writes) == expected_reads and len(opener.writes) == 2
 before_observer = Path(paths['journal']).read_bytes()
 for wrong in ({**applied, 'status': 'uncertain'},
               {**applied, 'intent': {**intent, 'id': delivery.digest('another intent')}},
               {**applied, 'receipt': {**receipt, 'id': delivery.digest('another receipt')}}):
  try:
-  packets.build_observer(prepared, wrong, now=dt.datetime.now(dt.timezone.utc))
+  packets.build_observer(prepared, wrong, now=dt.datetime.now(dt.timezone.utc), **profile_args)
  except Exception:
   pass
  else:
   raise AssertionError('observer accepted an unbound applied report')
  assert Path(paths['journal']).read_bytes() == before_observer
-observer = packets.build_observer(prepared, applied, now=dt.datetime.now(dt.timezone.utc))
+observer = packets.build_observer(prepared, applied, now=dt.datetime.now(dt.timezone.utc), **profile_args)
 packet = observer['proposal']['packet']
 assert observer['selection']['phase'] == 'observe'
 assert observer['selection']['packet_digest'] == delivery.digest(packet)
@@ -340,7 +422,7 @@ changed_observer['selection']['approval_digest'] = delivery.digest('another obse
 observer_state.write_text(json.dumps(changed_observer, sort_keys=True, ensure_ascii=False, separators=(',', ':')))
 try:
  try:
-  packets.restore(private, core, token)
+  packets.restore(private, core, token, **profile_args)
  except Exception:
   pass
  else:
@@ -348,12 +430,49 @@ try:
  assert Path(paths['journal']).read_bytes() == before_observer
 finally:
  observer_state.write_bytes(original_observer_state)
-restored = packets.restore(private, core, token)
+restored = packets.restore(private, core, token, **profile_args)
 assert restored['observer'] == observer
 assert packets.save_private(prepared) == state_path and state_path.read_bytes() == state_bytes
 assert Path(paths['journal']).read_bytes() == before_observer
 assert socket_attempts == []
-print(json.dumps({'prepared': True, 'controlled_native_reads': 40, 'controlled_native_writes': 2,
+if supplemental:
+ assert proposal['runtime_profile'] == profile_args['profile']
+ assert proposal['supplemental_allocation'] == allocation
+ assert json.loads(Path(paths['allocation']).read_text()) == allocation
+ assert proposal['documents']['allocation']['digest'] == packets.digest(allocation)
+ assert prepared['spec']['objective'] == allocation['accounting']['original_objective']
+ assert prepared['spec']['limits'] == allocation['accounting']['additional_limits']
+ assert any(call['body'] and call['body'].get('query') == github_merge.MERGE_RECEIPT_QUERY for call in opener.calls)
+ for wrong_profile in (None, {**profile_args['profile'], 'core_revision': '0' * 40}):
+  try:
+   execution._integrity(prepared, profile=wrong_profile)
+  except Exception:
+   pass
+  else:
+   raise AssertionError('execution accepted missing or different explicit runtime profile')
+  try:
+   packets.restore(private, core, token, profile=wrong_profile)
+  except Exception:
+   pass
+  else:
+   raise AssertionError('supplemental state accepted missing or different explicit runtime profile')
+  assert Path(paths['journal']).read_bytes() == before_observer
+ allocation_path = Path(paths['allocation'])
+ original_allocation = allocation_path.read_bytes()
+ changed_allocation = copy.deepcopy(allocation)
+ changed_allocation['accounting']['charged_prior_limits']['operations'] = 0
+ allocation_path.write_text(json.dumps(changed_allocation, sort_keys=True, separators=(',', ':')))
+ try:
+  try:
+   packets.restore(private, core, token, **profile_args)
+  except Exception:
+   pass
+  else:
+   raise AssertionError('changed supplemental debit was accepted on restore')
+  assert Path(paths['journal']).read_bytes() == before_observer
+ finally:
+  allocation_path.write_bytes(original_allocation)
+print(json.dumps({'prepared': True, 'controlled_native_reads': expected_reads, 'controlled_native_writes': 2,
                   'observer_bound': True, 'same_job_restore': True, 'socket_attempts': 0}))
 '''
 

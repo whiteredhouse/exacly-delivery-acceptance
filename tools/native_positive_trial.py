@@ -11,7 +11,6 @@ from pathlib import Path
 import re
 import stat
 import subprocess
-import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "whiteredhouse/exacly-delivery-acceptance"
@@ -213,19 +212,63 @@ def summary(document):
             stream.write("Selection expires at " + document["expires_at"] + ". The job retains its original private filesystem.\n")
 
 
-def run(phase, private, core, *, packets, relays, execution, ctx, app_token, relay_token, now):
-    credentials = (app_token, relay_token)
+def run(phase, private, core, *, packets, relays, execution, ctx, app_token, relay_token, now, protocol=None):
+    credentials = tuple(value for value in (app_token, relay_token) if value)
     require(app_token != relay_token, "credential_roles_collide")
+    selected = {}
+    relay_options = {}
+    protocols = None
+    if protocol is not None:
+        protocols = load_helper("native_trial_protocol")
+        require(protocol == protocols.load(ROOT), "supplemental_protocol_changed")
+        selected = {"profile": protocol["profile"]}
+        relay_options = {"protocol": protocol}
+    control = private.with_name(private.name + "-allocation")
+    if phase == "authorize":
+        require(protocol is not None and not app_token and relay_token, "wrong_allocation_context")
+        require(not private.exists() and not control.exists(), "private_runtime_already_exists")
+        relay = relays.Relay(relay_token, ctx, **relay_options)
+        relay.check_host()
+        allocation = relay.check_supplemental_allowance()
+        protocols.validate_allocation(allocation, profile=protocol["profile"], spec=protocol["spec"], context=ctx)
+        control.mkdir(mode=0o700)
+        create_private(control / "allocation.json", allocation, credentials)
+        create_private(control / "allocation-checkpoint.json", {
+            "schema_version": "0.1.0", "kind": "pre-mint-supplemental-allocation-checkpoint",
+            "context": ctx, "private_dir": str(private), "protocol_digest": digest(protocol),
+            "allocation_digest": digest(allocation), "relay": relay.export_state(),
+        }, credentials)
+        return {"status": "supplemental_allocation_approved", "native_effect": "not_attempted"}
+    require(app_token and relay_token, "missing_preparation_credential")
     if phase == "prepare":
         require(not private.exists(), "private_runtime_already_exists")
-        relay = relays.Relay(relay_token, ctx)
-        relay.check_host()
-        spec_path = ROOT / "config/native-positive-trial.json"
-        require(spec_path.resolve() == spec_path)
-        spec = decode(spec_path.read_bytes())
+        allocation_options = {}
+        if protocol is None:
+            relay = relays.Relay(relay_token, ctx)
+            relay.check_host()
+            spec_path = ROOT / "config/native-positive-trial.json"
+            require(spec_path.resolve() == spec_path)
+            spec = decode(spec_path.read_bytes())
+        else:
+            allocation = read_private(control / "allocation.json")
+            previous = read_private(control / "allocation-checkpoint.json")
+            require(previous.get("schema_version") == "0.1.0"
+                    and previous.get("kind") == "pre-mint-supplemental-allocation-checkpoint"
+                    and previous.get("context") == ctx and previous.get("private_dir") == str(private)
+                    and previous.get("protocol_digest") == digest(protocol)
+                    and previous.get("allocation_digest") == digest(allocation), "allocation_checkpoint_changed")
+            protocols.validate_allocation(allocation, profile=protocol["profile"], spec=protocol["spec"], context=ctx)
+            create_private(control / "allocation-consumed.json", {
+                "context": ctx, "protocol_digest": digest(protocol), "allocation_digest": digest(allocation),
+            }, credentials)
+            relay = relays.Relay.restore(relay_token, ctx, previous["relay"], **relay_options)
+            relay.recheck_host()
+            spec = protocol["spec"]
+            allocation_options = {"allocation": allocation}
         installed = os.environ.get("CANARY_INSTALLATION_ID", "")
         require(installed == "177653055", "wrong_installation")
-        prepared = packets.prepare(private, spec, ctx, core, app_token, int(installed), now=now())
+        prepared = packets.prepare(private, spec, ctx, core, app_token, int(installed), now=now(),
+                                   **selected, **allocation_options)
         packets.save_private(prepared)
         create_private(private / "prepare-consumed.json", {"context": ctx, "phase": phase}, credentials)
         display = instructions(prepared, prepared, relays, packets, now())
@@ -234,7 +277,7 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
         summary(display)
         return {"status": "proposed", "native_effect": "not_attempted"}
 
-    prepared = packets.restore(private, core, app_token)
+    prepared = packets.restore(private, core, app_token, **selected)
     require(prepared["context"] == ctx, "wrong_host_context")
     require(os.environ.get("CANARY_INSTALLATION_ID") == "177653055", "wrong_installation")
     prior_name, prior_phase = (("coordinator-prepared.json", "prepare") if phase == "merge"
@@ -242,21 +285,23 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
     previous = consume(private / prior_name, prior_phase, ctx, prepared, credentials)
     create_private(private / (phase + "-consumed.json"),
                    {"context": ctx, "phase": phase, "checkpoint_digest": digest(previous)}, credentials)
-    relay = relays.Relay.restore(relay_token, ctx, previous["relay"])
+    relay = relays.Relay.restore(relay_token, ctx, previous["relay"], **relay_options)
     expires = date(previous["selection_expires_at"])
     require(now() < expires, "owner_selection_deadline_expired")
     if phase == "merge":
         receipt = relay.wait(prepared["selection"], expires_at=expires)
         packets.write_safe(private / "merge-approval-receipt.json", receipt, app_token)
-        report = execution.execute(prepared, receipt, token=app_token)
+        if protocol is not None:
+            relay.recheck_host()
+        report = execution.execute(prepared, receipt, token=app_token, **selected)
         packets.write_safe(private / "merge-result.json", report, app_token)
         require(report.get("status") == "applied", "native_merge_not_applied_do_not_resend")
-        replay = execution.offline_replay(prepared, report, token=app_token)
+        replay = execution.offline_replay(prepared, report, token=app_token, **selected)
         require(replay.get("status") == "passed" and replay.get("journal_unchanged") is True
                 and type(replay.get("network_syscalls")) is int
                 and replay["network_syscalls"] == 0, "offline_replay_not_proved")
         packets.write_safe(private / "offline-replay.json", replay, app_token)
-        observer = packets.build_observer(prepared, report, now=now())
+        observer = packets.build_observer(prepared, report, now=now(), **selected)
         display = instructions(prepared, observer, relays, packets, now())
         journal = Path(prepared["paths"]["journal"])
         checkpoint(private / "coordinator-merged.json", phase, ctx, prepared, relay.export_state(),
@@ -275,7 +320,9 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
             "applied_history_changed")
     receipt = relay.wait(observer["selection"], expires_at=expires)
     packets.write_safe(private / "observer-approval-receipt.json", receipt, app_token)
-    proof = execution.observe(prepared, observer, receipt, token=app_token)
+    if protocol is not None:
+        relay.recheck_host()
+    proof = execution.observe(prepared, observer, receipt, token=app_token, **selected)
     require(proof.get("status") == "passed"
             and all(type(proof.get(key)) is int for key in ("tests_passed", "tests_skipped", "observer_calls"))
             and proof.get("tests_passed") == 1
@@ -308,7 +355,7 @@ def failure_report(phase, private):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("prepare", "merge", "observe"))
+    parser.add_argument("phase", choices=("authorize", "prepare", "merge", "observe"))
     parser.add_argument("--private", type=Path, required=True)
     parser.add_argument("--core-source", type=Path, required=True)
     args = parser.parse_args()
@@ -319,21 +366,25 @@ def main():
         require(args.core_source.is_absolute() and args.core_source.resolve() == args.core_source)
         app_token = os.environ.get("CANARY_APP_TOKEN", "")
         relay_token = os.environ.get("CANARY_RELAY_TOKEN", "")
-        require(re.fullmatch(r"[A-Za-z0-9_.-]{20,1024}", app_token) and relay_token)
+        require(relay_token and ((phase == "authorize" and not app_token)
+                or (phase != "authorize" and re.fullmatch(r"[A-Za-z0-9_.-]{20,1024}", app_token))))
+        protocol = load_helper("native_trial_protocol").load(ROOT)
         packets = load_helper("native_trial_packets")
         relays = load_helper("native_trial_relay")
         execution = load_helper("native_trial_execution")
         result = run(phase, private, args.core_source, packets=packets, relays=relays,
                      execution=execution, ctx=ctx, app_token=app_token, relay_token=relay_token,
-                     now=lambda: dt.datetime.now(UTC))
+                     now=lambda: dt.datetime.now(UTC), protocol=protocol)
         print(json.dumps(result, sort_keys=True))
         return 0
     except Exception:
         # Never emit an exception string, child output, credentials or private state.
         result = failure_report(phase, locals().get("private"))
         try:
-            if "private" in locals() and private.is_dir() and "packets" in locals():
-                packets.write_safe(private / "trial-report.json", result, app_token)
+            if "private" in locals() and private.is_dir():
+                credentials = tuple(value for value in (locals().get("app_token"), locals().get("relay_token"))
+                                    if value)
+                create_private(private / "trial-report.json", result, credentials)
         except Exception:
             pass
         print(json.dumps(result, sort_keys=True))

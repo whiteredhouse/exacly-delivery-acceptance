@@ -132,7 +132,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: whiteredhouse/exacly
-          ref: 9a5cd90b8d3c3b2acc2a00e7e68e175558025432
+          ref: bd60d9d58c44390089a435d075a77f132cb684da
           path: exacly-runtime
           persist-credentials: false
       - name: Install the fixed runtime tools before minting
@@ -150,8 +150,20 @@ jobs:
             apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
             -o DPkg::Lock::Timeout=30 install --yes strace libseccomp2
           uv sync --locked --project exacly-runtime --python 3.12
+      - name: Verify the owner's exact supplemental allocation before minting
+        id: native-authorize
+        env:
+          CANARY_RELAY_TOKEN: ${{ github.token }}
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          umask 077
+          timeout --signal=TERM --kill-after=5s 120s \
+            uv run --no-sync --project exacly-runtime python -I -B diagnostic/tools/native_positive_trial.py authorize \
+            --core-source "$GITHUB_WORKSPACE/exacly-runtime" \
+            --private "$RUNNER_TEMP/native-positive-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
       - name: Mint the selected token for this job only
         id: native-token
+        if: ${{ steps.native-authorize.outcome == 'success' }}
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: '5572362'
@@ -184,6 +196,7 @@ jobs:
         with:
           name: native-positive-merge-proposal-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/supplemental-allocation.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-proposal.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-approval-instructions.json
           retention-days: 7
@@ -233,6 +246,7 @@ jobs:
         with:
           name: native-positive-result-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/supplemental-allocation.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-approval-receipt.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-approval-receipt.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-result.json
