@@ -1,7 +1,7 @@
 # Read-only native readiness diagnostic
 
 The native diagnostic runtime is pinned to
-`6e210d337f11cbd0e48fdb9df15d4d5089ce5782`. The existing native trial and
+`bd60d9d58c44390089a435d075a77f132cb684da`. The existing native trial and
 App-grant preflight retain their original runtime pins.
 
 The first native positive trial accepted the owner's exact selection but stopped

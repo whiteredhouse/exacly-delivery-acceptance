@@ -24,7 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
-CORE_REVISION = "6e210d337f11cbd0e48fdb9df15d4d5089ce5782"
+CORE_REVISION = "bd60d9d58c44390089a435d075a77f132cb684da"
 NATIVE_PINS = {
     "automatic_merge.py": "e6646012de31fb473f298861fa482bc7741e4592bd84375feaa1ebed1f9356b7",
     "github_merge.py": "207ac9bc6df50f8baf8ceafb7568163a26ccb02b2ee79da86707404298587d28",
