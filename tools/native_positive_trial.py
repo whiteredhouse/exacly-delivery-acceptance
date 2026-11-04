@@ -162,15 +162,19 @@ def instructions(prepared, item, relay, packets, now):
     phase = item["selection"]["phase"]
     name = "merge" if phase == "merge" else "observer"
     lease = date(prepared["proposal"]["configuration"]["actor"]["grant"]["not_after"])
-    expires = min(now + dt.timedelta(seconds=600), lease)
-    require(now < expires, "proposal_already_expired")
+    decision = (item["proposal"]["operation_approval"] if phase == "merge"
+                else item["proposal"]["packet"]["read_approval"])
+    plan = relay.plan_wait(item["selection"], credential_expires_at=min(lease, date(decision["expires_at"])))
+    require(plan["phase"] == phase and plan["selection_digest"] == digest(item["selection"]),
+            "wait_plan_changed")
     document = {"schema_version": "0.1.0", "kind": "proposed-owner-selection-instructions",
                 "status": "proposed", "authority_granted": False, "selection": item["selection"],
                 "owner": {"id": 1679024, "login": "p1c2u"},
                 "comment_destination": "https://github.com/" + REPOSITORY + "/pull/5",
                 "approve_command": relay.approval_command(item["selection"]),
                 "deny_command": relay.deny_command(item["selection"]),
-                "proposal_issued_at": timestamp(now), "expires_at": timestamp(expires),
+                "proposal_issued_at": plan["issued_at"], "expires_at": plan["submit_by"],
+                "verification_expires_at": plan["verify_by"], "wait_plan": plan,
                 "review": "Read the complete proposal before manually posting the exact single approval line on PR5.",
                 "retention": prepared["spec"]["retention"]}
     packets.write_safe(Path(prepared["private_dir"]) / (name + "-approval-instructions.json"),
@@ -178,12 +182,13 @@ def instructions(prepared, item, relay, packets, now):
     return document
 
 
-def checkpoint(path, phase, ctx, prepared, relay_state, expires, credentials, **extra):
+def checkpoint(path, phase, ctx, prepared, relay_state, expires, credentials, *, wait_plan, **extra):
+    require(isinstance(wait_plan, dict) and wait_plan.get("submit_by") == expires, "wait_plan_changed")
     value = {"schema_version": "0.1.0", "kind": "same-job-coordinator-checkpoint", "phase": phase,
              "context": ctx, "private_dir": prepared["private_dir"],
              "prepared_manifest_digest": digest(read_private(path.parent / "prepared-state.json")),
              "merge_selection_digest": digest(prepared["selection"]),
-             "relay": relay_state, "selection_expires_at": expires, **extra}
+             "relay": relay_state, "selection_expires_at": expires, "wait_plan": wait_plan, **extra}
     create_private(path, value, credentials)
     return value
 
@@ -195,7 +200,9 @@ def consume(path, expected_phase, ctx, prepared, credentials):
             and previous.get("phase") == expected_phase and previous.get("context") == ctx
             and previous.get("private_dir") == prepared["private_dir"]
             and previous.get("merge_selection_digest") == digest(prepared["selection"])
-            and previous.get("prepared_manifest_digest") == digest(read_private(path.parent / "prepared-state.json")),
+            and previous.get("prepared_manifest_digest") == digest(read_private(path.parent / "prepared-state.json"))
+            and isinstance(previous.get("wait_plan"), dict)
+            and previous.get("selection_expires_at") == previous["wait_plan"].get("submit_by"),
             "checkpoint_changed")
     return previous
 
@@ -203,13 +210,15 @@ def consume(path, expected_phase, ctx, prepared, credentials):
 def summary(document):
     # The exact command is also in the already complete artifact, never a secret.
     print(json.dumps({"phase": document["selection"]["phase"], "status": "waiting_for_owner_selection",
-                      "expires_at": document["expires_at"], "approve_command": document["approve_command"]}), flush=True)
+                      "expires_at": document["expires_at"], "verification_expires_at": document["verification_expires_at"],
+                      "approve_command": document["approve_command"]}), flush=True)
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if path:
         with open(path, "a", encoding="utf-8") as stream:
             stream.write("Review the complete proposal artifact, then manually post this exact line on PR #5.\n\n")
             stream.write("```text\n" + document["approve_command"] + "\n```\n\n")
-            stream.write("Selection expires at " + document["expires_at"] + ". The job retains its original private filesystem.\n")
+            stream.write("Submit the selection before " + document["expires_at"] + ". Verification must finish by "
+                         + document["verification_expires_at"] + ". The job retains its original private filesystem.\n")
 
 
 def run(phase, private, core, *, packets, relays, execution, ctx, app_token, relay_token, now, protocol=None):
@@ -271,9 +280,9 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
                                    **selected, **allocation_options)
         packets.save_private(prepared)
         create_private(private / "prepare-consumed.json", {"context": ctx, "phase": phase}, credentials)
-        display = instructions(prepared, prepared, relays, packets, now())
+        display = instructions(prepared, prepared, relay, packets, now())
         checkpoint(private / "coordinator-prepared.json", phase, ctx, prepared, relay.export_state(),
-                   display["expires_at"], credentials)
+                   display["expires_at"], credentials, wait_plan=display["wait_plan"])
         summary(display)
         return {"status": "proposed", "native_effect": "not_attempted"}
 
@@ -286,10 +295,8 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
     create_private(private / (phase + "-consumed.json"),
                    {"context": ctx, "phase": phase, "checkpoint_digest": digest(previous)}, credentials)
     relay = relays.Relay.restore(relay_token, ctx, previous["relay"], **relay_options)
-    expires = date(previous["selection_expires_at"])
-    require(now() < expires, "owner_selection_deadline_expired")
     if phase == "merge":
-        receipt = relay.wait(prepared["selection"], expires_at=expires)
+        receipt = relay.wait(prepared["selection"], plan=previous["wait_plan"])
         packets.write_safe(private / "merge-approval-receipt.json", receipt, app_token)
         if protocol is not None:
             relay.recheck_host()
@@ -302,10 +309,10 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
                 and replay["network_syscalls"] == 0, "offline_replay_not_proved")
         packets.write_safe(private / "offline-replay.json", replay, app_token)
         observer = packets.build_observer(prepared, report, now=now(), **selected)
-        display = instructions(prepared, observer, relays, packets, now())
+        display = instructions(prepared, observer, relay, packets, now())
         journal = Path(prepared["paths"]["journal"])
         checkpoint(private / "coordinator-merged.json", phase, ctx, prepared, relay.export_state(),
-                   display["expires_at"], credentials,
+                   display["expires_at"], credentials, wait_plan=display["wait_plan"],
                    observer_selection_digest=digest(observer["selection"]),
                    applied_report_digest=digest(report), journal_sha256=hashlib.sha256(journal.read_bytes()).hexdigest())
         summary(display)
@@ -318,7 +325,7 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
     require(report.get("status") == "applied" and digest(report) == previous.get("applied_report_digest")
             and hashlib.sha256(Path(prepared["paths"]["journal"]).read_bytes()).hexdigest() == previous.get("journal_sha256"),
             "applied_history_changed")
-    receipt = relay.wait(observer["selection"], expires_at=expires)
+    receipt = relay.wait(observer["selection"], plan=previous["wait_plan"])
     packets.write_safe(private / "observer-approval-receipt.json", receipt, app_token)
     if protocol is not None:
         relay.recheck_host()
@@ -330,7 +337,7 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
             and proof.get("journal_unchanged") is True, "authentic_observer_not_proved")
     packets.write_safe(private / "observer-result.json", proof, app_token)
     checkpoint(private / "coordinator-observed.json", phase, ctx, prepared, relay.export_state(),
-               previous["selection_expires_at"], credentials)
+               previous["selection_expires_at"], credentials, wait_plan=previous["wait_plan"])
     result = {"status": "positive_trial_completed", "native_effect": "applied", "offline_replay": "passed",
               "observer": "passed", "runner_loss_recovery_verified": False,
               "source": ctx["source"], "run_id": ctx["run_id"], "run_attempt": 1}
@@ -338,7 +345,23 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
     return result
 
 
-def failure_report(phase, private):
+def _diagnostic(error, relays):
+    fallback = {"component": "unknown", "code": "unclassified_failure"}
+    if relays is None:
+        return fallback
+    try:
+        if type(error) is not relays.RelayStopped or type(error.code) is not relays.RelayStopCode:
+            return fallback
+        expected = {"component": "relay", "code": error.code.value}
+        projected = relays.safe_diagnostic(error)
+        if type(projected) is dict and projected == expected:
+            return expected
+    except Exception:
+        pass
+    return fallback
+
+
+def failure_report(phase, private, *, error=None, relays=None):
     effect = "not_attempted"
     if phase != "prepare" and private is not None and private.is_dir():
         if (private / "execution-attempt.json").exists():
@@ -350,7 +373,8 @@ def failure_report(phase, private):
             except Exception:
                 pass
     return {"status": "stopped", "phase": phase, "resend_allowed": False,
-            "native_effect": effect, "error_code": "native_positive_trial_stopped"}
+            "native_effect": effect, "error_code": "native_positive_trial_stopped",
+            "diagnostic": _diagnostic(error, relays)}
 
 
 def main():
@@ -377,9 +401,9 @@ def main():
                      now=lambda: dt.datetime.now(UTC), protocol=protocol)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except Exception:
+    except Exception as error:
         # Never emit an exception string, child output, credentials or private state.
-        result = failure_report(phase, locals().get("private"))
+        result = failure_report(phase, locals().get("private"), error=error, relays=locals().get("relays"))
         try:
             if "private" in locals() and private.is_dir():
                 credentials = tuple(value for value in (locals().get("app_token"), locals().get("relay_token"))

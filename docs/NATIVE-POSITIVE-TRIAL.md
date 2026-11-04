@@ -109,11 +109,21 @@ that new exact command on PR #5 to select its actual packet and read decision.
 The first comment cannot authorize this later packet. The assistant must never
 post either command for the owner.
 
-Each selection has a hard maximum of ten minutes from preparing its published
-proposal, including artifact-upload delay, bounded by the current credential
-window. The instruction file shows the actual expiry. The relay accepts only
+Before publication, each selection receives a sealed `wait_plan` within the
+existing ten-minute phase ceiling and current credential and decision expiry.
+The instruction's `expires_at` (`submit_by`) is the strict comment-submission
+cutoff. `verification_expires_at` (`verify_by`) reserves time for the final
+inventory scan, exact comment reread and applicable host checks. Remaining reads
+and twenty-second poll slots may shorten the submission window below eight
+minutes. Upload and step delays consume the original window; restoring a
+checkpoint cannot renew it or replace missed slots with a burst of reads. The
+wait must begin before `submit_by`; the later verification deadline does not
+revive a wait that never started.
+The relay accepts only
 one fresh, unedited comment from the exact numeric owner, with the current run,
-attempt, challenge and every required digest. It rereads that comment before
+attempt, challenge and every required digest, created strictly before
+`submit_by`. A final scan at that cutoff can find an eligible last-moment
+comment. The relay rereads that comment before
 returning a receipt. Different authors, edited or duplicate matches, stale pins
 and incomplete inventories stop the phase. The exact `deny_command` aborts.
 
@@ -148,6 +158,10 @@ Only exact safe paths are uploaded: two proposal/instruction pairs and
 directory, journal, key, token, child stderr/stdout or packet checkpoint is
 uploaded. Known applied effects remain applied if a later check fails.
 Missing/partial evidence remains incomplete; post-job cleanup must be verified.
+Stopped reports add only closed diagnostic codes from owned relay failures;
+unknown failures receive `unclassified_failure`. Exception text, provider bodies,
+headers and private paths are excluded. Known applied effects retain their
+existing classification even if a later step stops.
 
 A passing result establishes only this one-job positive case, its offline replay
 and separately approved observation. It does not establish the remaining live
