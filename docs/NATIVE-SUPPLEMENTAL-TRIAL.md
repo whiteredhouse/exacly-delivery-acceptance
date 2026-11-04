@@ -1,6 +1,14 @@
 # Supplemental native positive trial
 
-This is a proposed additional allowance for the same nonproduction objective,
+Both recorded allocations are now consumed. Supplemental run `41665083190`
+stopped during merge selection without attempting a native effect. Its retained
+report does not establish the precise private failure cause. The owner's later
+comment arrived after both the published cutoff and the run's end. The protocol
+below records that historical allowance; it does not authorize another run.
+The unchanged history guard rejects run thirteen. A further trial requires
+separately reviewed accounting, source and explicit owner approval.
+
+This protocol defines an additional allowance for the same nonproduction objective,
 operation key and data-only PR #5 in `whiteredhouse/exacly-delivery-acceptance`.
 The source change and controlled tests grant no operational capacity. A new
 installation may be created only after the exact owner approves the additional
@@ -158,9 +166,23 @@ The following steps remain separate:
 
 The same alive job retains the original private journal, key and runtime across
 these steps. Checkpoints preserve the immutable allocation, used phases, read
-counts and original clocks. Each post-mint selection still has at most ten
-minutes, including upload delay, within the original thirty-minute local
-credential window. There is no remint, clock reset or automatic extension.
+counts and original clocks. Before publishing each proposal, the relay seals
+its `wait_plan`. The instruction's `expires_at` is the strict comment-submission
+cutoff (`submit_by`); `verification_expires_at` is the later `verify_by` deadline
+for the final inventory scan, exact comment reread and host checks. A comment
+created at or after the submission cutoff cannot select the packet.
+
+The submission window uses only the polls and reads still available. It reserves
+the exact-comment reread and host checks, plus the minimum reads for the later
+observer phase. It may therefore be shorter than eight minutes. Poll starts stay
+at least twenty seconds apart, with a final scan at the submission cutoff. Upload and
+step delays consume this same sealed window; missed slots do not create a burst
+of replacement reads. Both deadlines fit within the existing ten-minute phase
+ceiling, original thirty-minute job lifetime and current actor and decision
+expiry. Restoring a checkpoint cannot renew an expired or pending plan. The wait
+must begin before `submit_by`; its verification tail does not reopen submission
+or revive a wait that never started.
+There is no remint, clock reset or automatic extension.
 Wrong, stale, edited, duplicated or incomplete selections stop the phase; the
 exact denial command aborts.
 
@@ -194,6 +216,15 @@ identity descriptors needed to review its binding. Private directory contents,
 journal, marker key, token, child stderr/stdout and checkpoints are excluded. Verify the
 action's actual post-job token revocation. An already applied effect remains
 applied if a later check fails; incomplete evidence is not success.
+
+A stopped `trial-report.json` retains the existing fixed status, phase,
+no-resend rule and known-effect classification. Its `diagnostic` adds only a
+closed relay reason code, such as `verification_expired`,
+`read_budget_exhausted` or `owner_denied`. Unknown failures use
+`unclassified_failure`. Exception messages, provider response bodies, headers,
+credentials, private paths and tracebacks are never copied into this field.
+These diagnostics describe future executions; they do not recover the missing
+private reason from the historical stopped run.
 
 A passing result establishes only this one continuously alive job's positive
 merge, offline replay and separately approved observation. Recovery after
