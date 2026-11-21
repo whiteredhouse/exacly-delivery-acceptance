@@ -212,7 +212,7 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           umask 077
-          timeout --signal=TERM --kill-after=5s 1200s \
+          timeout --signal=TERM --kill-after=5s 1800s \
             uv run --no-sync --project exacly-runtime python -I -B diagnostic/tools/native_positive_trial.py merge \
             --core-source "$GITHUB_WORKSPACE/exacly-runtime" \
             --private "$RUNNER_TEMP/native-positive-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -236,7 +236,7 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           umask 077
-          timeout --signal=TERM --kill-after=5s 900s \
+          timeout --signal=TERM --kill-after=5s 1200s \
             uv run --no-sync --project exacly-runtime python -I -B diagnostic/tools/native_positive_trial.py observe \
             --core-source "$GITHUB_WORKSPACE/exacly-runtime" \
             --private "$RUNNER_TEMP/native-positive-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

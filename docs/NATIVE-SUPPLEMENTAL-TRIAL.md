@@ -1,6 +1,6 @@
 # Supplemental native positive trial
 
-Both recorded allocations are consumed. This protocol proposes one further
+All three recorded allocations are consumed. This protocol proposes one further
 allowance for an attended trial of the same nonproduction objective, operation
 key and data-only PR #5 in `whiteredhouse/exacly-delivery-acceptance`.
 The source change and controlled tests grant no operational capacity. A new
@@ -28,14 +28,25 @@ The manifest preserves these safe observations and the original run's existing
 reviewed evidence. Run twelve's artifacts are no longer available as of
 2026-11-21. Their historical IDs and ZIP digests are references from the earlier
 review, not newly verified archive contents. The old private journal was not
-recovered, and the precise wait failure cause remains unknown. The owner's
+recovered, and that run's precise wait failure cause remains unknown. The owner's
 later comment arrived after the published cutoff and the run's end; it cannot
 select a future packet or extend the consumed allocation.
+
+The third allocation, run `44895283908`, also stopped before public native
+invocation. Its exact safe result archive and
+[completed job log](https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/44895283908/job/136819502140)
+agree on `submission_expired`, `native_effect: not_attempted` and no resend.
+The report was emitted at `10:50:11.3744342 UTC`, after the published submission
+cutoff `10:50:10.825727 UTC`; official token revocation followed. The correct,
+unedited [owner comment](https://github.com/whiteredhouse/exacly-delivery-acceptance/pull/5#issuecomment-7061530282)
+arrived at `10:53:08 UTC`, 177.174273 seconds after that cutoff. Both original
+ZIPs, the safe report, unchanged allocation and exact source path were checked
+for this review. The expired selection cannot authorize another installation.
 
 ## Fixed scope and accounting
 
 The reviewed [manifest](../config/native-supplemental-trial.json) binds the
-original objective and operation key, both consumed allocations and their
+original objective and operation key, all three consumed allocations and their
 evidence, the complete workflow history and this additional allowance. The core checkout is
 `bd60d9d58c44390089a435d075a77f132cb684da`. The selected canary is unchanged:
 
@@ -56,16 +67,16 @@ The protected inventory, branch protection, independent review and canary
 contract remain binding. Current native readiness must still pass immediately
 before an effect; the successful read-only diagnostic is historical evidence.
 
-| Budget | Both prior allocations charged | Proposed additional allowance | Aggregate limit after approval |
+| Budget | All three prior allocations charged | Proposed additional allowance | Aggregate limit after approval |
 | --- | ---: | ---: | ---: |
-| Operations | 2 | 1 | 3 |
-| Delivery engine wall-time capacity | 720,000 ms | 360,000 ms | 1,080,000 ms |
-| Delivery engine native reads | 384 | 192 | 576 |
+| Operations | 3 | 1 | 4 |
+| Delivery engine wall-time capacity | 1,080,000 ms | 360,000 ms | 1,440,000 ms |
+| Delivery engine native reads | 576 | 192 | 768 |
 | Rollbacks | 0 | 0 | 0 |
 
 These are capacity charges, not claims about measured work performed by the
-prior runs. The ordered `consumed_allocations` records bind runs `41526436188`
-and `41665083190`, each charged its full one-operation, 360,000 ms, 192-read,
+prior runs. The ordered `consumed_allocations` records bind runs `41526436188`,
+`41665083190` and `44895283908`, each charged its full one-operation, 360,000 ms, 192-read,
 zero-rollback allowance. Their sum must equal `charged_prior_limits`; the
 aggregate must equal that sum plus the proposed addition. No consumed entry may
 be omitted, duplicated or replaced by a smaller charge. The new installation
@@ -73,16 +84,16 @@ receives only the additional allowance, not the aggregate.
 Cross-attempt accounting belongs to this fixed canary coordinator; no native
 cross-journal import or general accounting feature is claimed.
 
-This table covers the two consumed engine allocations and the proposed third.
+This table covers the three consumed engine allocations and the proposed fourth.
 The later observer has its own separately selected, one-call, zero-write read decision, capped at
 120 seconds and 64 reads. Its reads and the relay's separate 64-GET allowance
 are metered independently of this table.
 
-The manifest fixes all twelve prior workflow-history tuples, including source,
+The manifest fixes all thirteen prior workflow-history tuples, including source,
 attempt, title, workflow ID and terminal result. The guard also checks their
-run numbers one through twelve and requires the consumed records to identify
+run numbers one through thirteen and requires the consumed records to identify
 every prior native-positive PR5 run. Authorization accepts exactly that baseline
-plus the current run, whose workflow run number must be thirteen. A historical
+plus the current run, whose workflow run number must be fourteen. A historical
 run ID cannot become a new allocation context. Any extra dispatch, including a
 read-only diagnostic, or any changed/duplicate history record blocks this plan.
 Deleting a run cannot restore
@@ -107,12 +118,12 @@ to become available.
 After the reviewed source is frozen and the actual pending run exists:
 
 1. Verify the actual run's repository, source SHA, mode, PR5 title and attempt 1.
-   Review the manifest's original goal, operation key, both consumed records and
+   Review the manifest's original goal, operation key, all consumed records and
    the full additional and aggregate budget table above.
 2. The assistant will generate and provide the exact allocation command from
    the actual pending run's metadata and reviewed pure protocol module. Review
    that line before using it. It binds the actual run ID, attempt and source
-   SHA, the manifest and accounting digests, original goal and both consumed run
+   SHA, the manifest and accounting digests, original goal and all consumed run
    IDs. It explicitly states prior charges and the additional and aggregate
    limits. For independent reproduction, the source API is
    `native_trial_protocol.load(root)` followed
@@ -164,7 +175,7 @@ one-repository App token with the existing six exact permissions. Automatic
 post-job revocation remains enabled. Preparation verifies the retained
 allocation, initializes the actual private installation, and includes the safe
 `supplemental-allocation.json` projection both in the merge proposal and as its
-own published file. Both consumed charges remain visible beside the
+own published file. All three consumed charges remain visible beside the
 additional allowance. The safe projection is published only from the actual
 prepared private directory; no pre-mint checkpoint is uploaded.
 
@@ -197,17 +208,34 @@ created at or after the submission cutoff cannot select the packet.
 
 The submission window uses only the polls and reads still available. It reserves
 the exact-comment reread and host checks, plus the minimum reads for the later
-observer phase. It may therefore be shorter than eight minutes. Poll starts stay
-at least twenty seconds apart, with a final scan at the submission cutoff. Upload and
-step delays consume this same sealed window; missed slots do not create a burst
-of replacement reads. Both deadlines fit within the existing ten-minute phase
-ceiling, original thirty-minute job lifetime and current actor and decision
-expiry. Restoring a checkpoint cannot renew an expired or pending plan. The wait
+observer phase. The selected supplemental policy allows at most fifteen minutes
+for submission, with poll starts at least forty-five seconds apart. With enough
+remaining time and reads, the published plan has 21 polls, a 900-second human
+window and a 71-second verification tail. Its complete verification phase stays
+within the explicit twenty-minute ceiling. The actual submission and
+verification deadlines remain the values in the instruction file.
+
+Both phases share the original thirty-minute relay lifetime and unchanged actor
+credential expiry. The later observer window may be shorter after merge review,
+native work and replay; a full fifteen minutes for both selections is not
+guaranteed. Its plan also respects the separately selected read decision's
+expiry. The relay refuses publication if the remaining time or reads cannot fund
+the minimum wait and verification. No credential is reminted or extended.
+
+The plan seals `poll_interval_seconds` as well as the deadlines and read
+reserves. A final inventory scan is scheduled for the submission cutoff. Upload,
+step and late-wake delays consume the same window; missed slots never create a
+burst of replacement reads. Restoring a checkpoint cannot renew an expired or pending plan. The wait
 must begin before `submit_by`; its verification tail does not reopen submission
 or revive a wait that never started.
 There is no remint, clock reset or automatic extension.
 Wrong, stale, edited, duplicated or incomplete selections stop the phase; the
 exact denial command aborts.
+
+Legacy local callers without the supplemental protocol retain their ten-minute
+phase ceiling and twenty-second polling. Private relay checkpoints now use the
+strict interval-bound format; historical job checkpoints are not migrated into
+new authority.
 
 ## Bounds, artifacts and stopping conditions
 
@@ -215,8 +243,11 @@ Each native call retains its 120-second and 64-read ceiling. Only invoke permits
 the two fixed writes; reconciliation and the separately selected observer are
 read-only. The relay has one total 64-GET allowance, including allocation,
 history checks and both selection phases, with at most 25 polls per phase and
-no HTTP retries or redirects. The forty-minute job deadline and existing step
-watchdogs stay unchanged.
+no HTTP retries or redirects. The forty-minute platform job deadline is
+unchanged. Outer workflow watchdogs allow 1,800 seconds for the merge/replay
+step and 1,200 seconds for the observer step, so they cover the longer wait plus
+the existing bounded native work. These watchdogs do not extend the original
+1,800-second relay lifetime, the actor lease or any native call/read decision.
 
 There is one invocation under the additional allowance. A valid uncertain result
 may use the existing single read-only reconciliation while the original

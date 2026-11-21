@@ -142,11 +142,11 @@
     }
   },
   "local_grant_seconds": 1800,
-  "owner_wait_seconds": 600,
+  "owner_wait_seconds": 1200,
   "maximum_relay_reads": 64,
   "maximum_polls_per_phase": 25,
-  "poll_interval_seconds": 20,
-  "retention": "Fresh installation exists only during this continuously alive job, after explicit supplemental allocation approval. Both consumed allocations stay fully charged in coordinator accounting; no original journal/key is restored and no native cross-journal accounting is claimed. Safe artifacts cannot preserve original filesystem identity after runner loss.",
+  "poll_interval_seconds": 45,
+  "retention": "Fresh installation exists only during this continuously alive job, after explicit supplemental allocation approval. All three consumed allocations stay fully charged in coordinator accounting; no original journal/key is restored and no native cross-journal accounting is claimed. Safe artifacts cannot preserve original filesystem identity after runner loss.",
   "accounting": {
     "schema_version": "0.2.0",
     "kind": "supplemental-native-trial-allocation",
@@ -235,12 +235,72 @@
           "precise_wait_failure_cause": "not retained",
           "proof_basis": "The actual job's closed stopped report says native_effect not_attempted. At its exact reviewed source, the coordinator's execution helper writes an execution-attempt marker before public native invocation and preserves an attempted or known-applied effect in failures. This relies on the pinned trusted CI source and its retained safe log; old artifact contents and the lost private journal were not revalidated. Run failure, artifact absence or an unmerged PR alone is not the proof."
         }
+      },
+      {
+        "run_id": 44895283908,
+        "run_attempt": 1,
+        "source": "6dd46ac55d87f07a2a62328cb182920383b12918",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410,
+        "charged_limits": {
+          "operations": 1,
+          "wall_time_ms": 360000,
+          "reads": 192,
+          "rollbacks": 0
+        },
+        "native_invocation_released": false,
+        "native_completion_receipt_present": false,
+        "evidence": {
+          "kind": "reviewed-safe-artifacts-and-pinned-before-invoke-path",
+          "job_id": 136819502140,
+          "job_url": "https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/44895283908/job/136819502140",
+          "source_revision": "6dd46ac55d87f07a2a62328cb182920383b12918",
+          "coordinator_path": "tools/native_positive_trial.py",
+          "execution_path": "tools/native_trial_execution.py",
+          "proposal_artifact": {
+            "id": 14703513720,
+            "digest": "sha256:a1dbf4cdcc79c18dfb12dafea225eaae561945084eef86e7cb59b7cc32f31f01"
+          },
+          "result_artifact": {
+            "id": 14703634122,
+            "digest": "sha256:6e9057d9bdaf2643275197f357b7d3251fb323f2d6382f04ecd394f045c0bd0f"
+          },
+          "safe_report": {
+            "diagnostic": {
+              "code": "submission_expired",
+              "component": "relay"
+            },
+            "error_code": "native_positive_trial_stopped",
+            "native_effect": "not_attempted",
+            "phase": "merge",
+            "resend_allowed": false,
+            "status": "stopped"
+          },
+          "safe_result_document_digest": "sha256:47263fad87e1a10014d31305a4cb4f2f1a45732de34e8b0af6ae718994b3bade",
+          "prepared_allocation_preserved": true,
+          "submit_by": "2026-11-21T10:50:10.825727Z",
+          "verify_by": "2026-11-21T10:51:21.825727Z",
+          "report_log_timestamp": "2026-11-21T10:50:11.3744342Z",
+          "official_token_revocation_log_timestamp": "2026-11-21T10:50:13.7156076Z",
+          "late_owner_selection": {
+            "comment_id": 7061530282,
+            "owner_id": 1679024,
+            "created_at": "2026-11-21T10:53:08Z",
+            "updated_at": "2026-11-21T10:53:08Z",
+            "exact_command": true,
+            "seconds_after_submit_cutoff": 177.174273,
+            "accepted": false
+          },
+          "proof_basis": "The exact safe result archive and completed job log report relay submission_expired, merge not_attempted and resend disallowed. The pinned coordinator's execution helper writes its attempt marker before public native invocation and preserves attempted or known-applied effects. The unchanged provider target corroborates no merge but is not the proof alone. The correct owner command arrived after the cutoff and completed run, so it cannot select this installation or authorize continuation. No private journal, marker key or App token was recovered or independently measured."
+        }
       }
     ],
     "charged_prior_limits": {
-      "operations": 2,
-      "wall_time_ms": 720000,
-      "reads": 384,
+      "operations": 3,
+      "wall_time_ms": 1080000,
+      "reads": 576,
       "rollbacks": 0
     },
     "additional_limits": {
@@ -250,9 +310,9 @@
       "rollbacks": 0
     },
     "aggregate_limits": {
-      "operations": 3,
-      "wall_time_ms": 1080000,
-      "reads": 576,
+      "operations": 4,
+      "wall_time_ms": 1440000,
+      "reads": 768,
       "rollbacks": 0
     },
     "authorization": "exact-owner-environment-approval-comment-before-initialization",
@@ -365,7 +425,17 @@
         "status": "completed",
         "conclusion": "failure",
         "workflow_id": 403984410
+      },
+      {
+        "run_id": 44895283908,
+        "run_attempt": 1,
+        "source": "6dd46ac55d87f07a2a62328cb182920383b12918",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
       }
     ]
-  }
+  },
+  "owner_submission_seconds": 900
 }

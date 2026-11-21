@@ -85,11 +85,13 @@ owner-reviewed `canary-merger-diagnostic` environment and approval of the exact
 frozen run; they do not need to merge into main. See the
 [branch preflight setup](docs/APP-SETUP.md#7-owner-reviewed-app-grant-candidate-preflight).
 
-The [native trial protocol](docs/NATIVE-SUPPLEMENTAL-TRIAL.md) preserves both
+The [native trial protocol](docs/NATIVE-SUPPLEMENTAL-TRIAL.md) preserves all three
 consumed allocations and proposes one separately approved attended allowance.
 Selection instructions distinguish the comment-submission cutoff from the
-bounded verification deadline; closed reason
-codes explain future relay stops without exposing private exception text.
+bounded verification deadline. Supplemental review allows up to fifteen minutes
+with forty-five-second polling, capped by the original thirty-minute lifetime,
+credential expiry and shared read budget. Closed reason codes explain relay
+stops without exposing private exception text.
 Publishing the protocol grants no capacity; the exact actual-run owner approval
 is required before a new installation or token mint.
 

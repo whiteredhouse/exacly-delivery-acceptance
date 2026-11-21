@@ -32,6 +32,7 @@ JOB = "native-positive-trial"
 TITLE = "canary-bootstrap:native-positive-trial:pr-5"
 COMMENTS = PREFIX + "/issues/5/comments?per_page=100"
 MAX_READS, MAX_POLLS, MAX_SECONDS, POLL_SECONDS = 64, 25, 600, 20
+MAX_JOB_SECONDS = 1800
 MAX_HISTORY, MAX_BODY = 499, 1024 * 1024
 UTC = dt.timezone.utc
 HEX = re.compile(r"[0-9a-f]{64}\Z")
@@ -258,8 +259,9 @@ class Relay:
                  and math.isfinite(self._created_monotonic) and self._created_monotonic >= 0,
                  "invalid relay clock", code=RelayStopCode.CLOCK_INVALID)
         self._last_monotonic, self._last_at = self._created_monotonic, self._created_at
-        self._deadline = self._created_monotonic + MAX_SECONDS
-        self._expires = self._created_at + dt.timedelta(seconds=MAX_SECONDS)
+        phase_seconds, _, _ = self._wait_policy()
+        self._deadline = self._created_monotonic + phase_seconds
+        self._expires = self._created_at + dt.timedelta(seconds=phase_seconds)
         self._pending_wait = None
 
     approval_command = staticmethod(approval_command)
@@ -278,7 +280,7 @@ class Relay:
         self._job_live()
         if self._pending_wait is not None:
             self._live()
-        payload = {"schema_version": "0.2.0", "kind": "fixed-native-relay-checkpoint",
+        payload = {"schema_version": "0.3.0", "kind": "fixed-native-relay-checkpoint",
                    "context": copy.deepcopy(self.context), "reads": self.reads,
                    "host_checked": self._host_checked, "phases": list(self._phases),
                    "created_at": _full_stamp(self._created_at),
@@ -309,7 +311,7 @@ class Relay:
             if protocol is not None:
                 keys.update(("protocol", "allocation"))
             _require(set(value) == keys
-                     and value["schema_version"] == "0.2.0" and value["kind"] == "fixed-native-relay-checkpoint"
+                     and value["schema_version"] == "0.3.0" and value["kind"] == "fixed-native-relay-checkpoint"
                      and value["context"] == context and type(value["host_checked"]) is bool
                      and value["host_checked"] is True and type(value["reads"]) is int
                      and 4 <= value["reads"] <= MAX_READS
@@ -328,9 +330,9 @@ class Relay:
             born, deadline = value["created_monotonic"], value["deadline_monotonic"]
             _require(type(born) in (int, float) and type(deadline) in (int, float)
                      and math.isfinite(born) and math.isfinite(deadline)
-                     and 0 <= born <= client._monotonic() and born < deadline <= born + 3 * MAX_SECONDS
-                     and created <= _utc(client._clock()) < created + dt.timedelta(seconds=3 * MAX_SECONDS)
-                     and created < expires <= created + dt.timedelta(seconds=3 * MAX_SECONDS),
+                     and 0 <= born <= client._monotonic() and born < deadline <= born + MAX_JOB_SECONDS
+                     and created <= _utc(client._clock()) < created + dt.timedelta(seconds=MAX_JOB_SECONDS)
+                     and created < expires <= created + dt.timedelta(seconds=MAX_JOB_SECONDS),
                      "relay checkpoint lifetime differs", code=RelayStopCode.CHECKPOINT_INVALID)
             client.reads, client._host_checked = value["reads"], True
             client._phases = list(value["phases"])
@@ -374,8 +376,8 @@ class Relay:
     def _job_live(self):
         _require(not self._failed, "relay is permanently stopped", code=RelayStopCode.PERMANENT_STOP)
         mono, now = self._times()
-        _require(mono < self._created_monotonic + 3 * MAX_SECONDS
-                 and now < self._created_at + dt.timedelta(seconds=3 * MAX_SECONDS),
+        _require(mono < self._created_monotonic + MAX_JOB_SECONDS
+                 and now < self._created_at + dt.timedelta(seconds=MAX_JOB_SECONDS),
                  "relay job lifetime expired", code=RelayStopCode.JOB_LIFETIME_EXPIRED)
         return mono, now
 
@@ -392,6 +394,18 @@ class Relay:
         _require(mono < pending["submit_monotonic"] and now < _full_date(pending["plan"]["submit_by"]),
                  "owner selection submission deadline expired", code=RelayStopCode.SUBMISSION_EXPIRED)
 
+    def _wait_policy(self):
+        if self.protocol is None:
+            return MAX_SECONDS, MAX_SECONDS, POLL_SECONDS
+        spec = self.protocol["spec"]
+        selected = (spec["owner_wait_seconds"], spec["owner_submission_seconds"],
+                    spec["poll_interval_seconds"])
+        phase, submission, interval = selected
+        _require(all(type(value) is int for value in selected)
+                 and 0 < interval <= submission <= phase <= MAX_JOB_SECONDS,
+                 "invalid owner wait policy", code=RelayStopCode.CHECKPOINT_INVALID)
+        return selected
+
     def _wait_costs(self, phase):
         history_pages = ((len(self.protocol["spec"]["accounting"]["history_baseline"]) + 100) // 100
                          if self.protocol is not None else 0)
@@ -406,7 +420,8 @@ class Relay:
         plan = pending["plan"]
         _require(type(plan) is dict and set(plan) == {
             "phase", "selection_digest", "issued_at", "submit_by", "verify_by", "allowed_polls",
-            "post_selection_reads", "future_phase_reads", "verification_reserve_seconds"},
+            "post_selection_reads", "future_phase_reads", "verification_reserve_seconds",
+            "poll_interval_seconds"},
             "invalid relay wait plan", code=code)
         _require(plan["phase"] in ("merge", "observe")
                  and type(plan["selection_digest"]) is str and DIGEST.fullmatch(plan["selection_digest"])
@@ -415,25 +430,29 @@ class Relay:
                  and type(plan["future_phase_reads"]) is int and 0 <= plan["future_phase_reads"] <= 12
                  and type(plan["verification_reserve_seconds"]) is int
                  and plan["verification_reserve_seconds"] == (plan["post_selection_reads"] + 1) * 10 + 1
+                 and type(plan["poll_interval_seconds"]) is int
                  and type(pending["reads"]) is int and 4 <= pending["reads"] <= MAX_READS,
                  "invalid relay wait plan", code=code)
         issued, submit, verify = (_full_date(plan[key]) for key in ("issued_at", "submit_by", "verify_by"))
         mono, end, limit = (pending[key] for key in (
             "issued_monotonic", "submit_monotonic", "verify_monotonic"))
         post_reads, future_reads = self._wait_costs(plan["phase"])
+        phase_seconds, submission_seconds, interval = self._wait_policy()
         _require(all(type(value) in (int, float) and math.isfinite(value)
                      for value in (mono, end, limit))
                  and self._created_monotonic <= mono < end < limit
-                 <= self._created_monotonic + 3 * MAX_SECONDS
+                 <= self._created_monotonic + MAX_JOB_SECONDS
                  and self._created_at <= issued < submit < verify
-                 <= self._created_at + dt.timedelta(seconds=3 * MAX_SECONDS)
+                 <= self._created_at + dt.timedelta(seconds=MAX_JOB_SECONDS)
                  and plan["post_selection_reads"] == post_reads
                  and plan["future_phase_reads"] == future_reads
                  and (submit - issued).total_seconds() == end - mono
                  and (verify - issued).total_seconds() == limit - mono
-                 and end - mono == (plan["allowed_polls"] - 1) * POLL_SECONDS
+                 and plan["poll_interval_seconds"] == interval
+                 and end - mono == (plan["allowed_polls"] - 1) * interval
+                 and end - mono <= submission_seconds
                  and limit - end == plan["verification_reserve_seconds"]
-                 and limit - mono <= MAX_SECONDS
+                 and limit - mono <= phase_seconds
                  and pending["reads"] + plan["allowed_polls"] + plan["post_selection_reads"]
                  + plan["future_phase_reads"] <= MAX_READS,
                  "invalid relay wait plan", code=code)
@@ -467,20 +486,22 @@ class Relay:
             _require(polls >= 2, "relay GET budget cannot fund owner verification",
                      code=RelayStopCode.READ_BUDGET_INSUFFICIENT)
             reserve = (post_reads + 1) * 10 + 1
-            cap = min(float(MAX_SECONDS), (lease - now).total_seconds(),
-                      self._created_monotonic + 3 * MAX_SECONDS - mono,
-                      (self._created_at + dt.timedelta(seconds=3 * MAX_SECONDS) - now).total_seconds())
-            slots = min(polls - 1, math.floor((cap - reserve) / POLL_SECONDS))
+            phase_seconds, submission_seconds, interval = self._wait_policy()
+            cap = min(float(phase_seconds), (lease - now).total_seconds(),
+                      self._created_monotonic + MAX_JOB_SECONDS - mono,
+                      (self._created_at + dt.timedelta(seconds=MAX_JOB_SECONDS) - now).total_seconds())
+            slots = min(polls - 1, math.floor(min(submission_seconds, cap - reserve) / interval))
             _require(slots >= 1, "owner credential deadline cannot fund verification",
                      code=(RelayStopCode.CREDENTIAL_EXPIRED if (lease - now).total_seconds() <= cap
                            else RelayStopCode.JOB_LIFETIME_EXPIRED))
-            submit_seconds = slots * POLL_SECONDS
+            submit_seconds = slots * interval
             plan = {"phase": phase, "selection_digest": _selection_digest(selection),
                     "issued_at": _full_stamp(now),
                     "submit_by": _full_stamp(now + dt.timedelta(seconds=submit_seconds)),
                     "verify_by": _full_stamp(now + dt.timedelta(seconds=submit_seconds + reserve)),
                     "allowed_polls": slots + 1, "post_selection_reads": post_reads,
-                    "future_phase_reads": future_reads, "verification_reserve_seconds": reserve}
+                    "future_phase_reads": future_reads, "verification_reserve_seconds": reserve,
+                    "poll_interval_seconds": interval}
             self._pending_wait = {"plan": plan, "issued_monotonic": mono,
                                   "submit_monotonic": mono + submit_seconds,
                                   "verify_monotonic": mono + submit_seconds + reserve,
@@ -800,10 +821,11 @@ class Relay:
             submit_by = _full_date(plan["submit_by"])
             self._phase_active = True
             self._live()
+            interval = plan["poll_interval_seconds"]
             approve, deny = approval_command(selection), deny_command(selection)
             for poll in range(plan["allowed_polls"]):
                 scan_at, _ = self._times()
-                if 0 < pending["submit_monotonic"] - scan_at < POLL_SECONDS:
+                if 0 < pending["submit_monotonic"] - scan_at < interval:
                     # A late wake must not shorten the final polling interval.
                     self._sleep(pending["submit_monotonic"] - scan_at)
                     scan_at, _ = self._times()
@@ -846,9 +868,9 @@ class Relay:
                 self._live()
                 mono, _ = self._times()
                 # Missed publication-anchored slots are skipped, never caught up.
-                earliest = max(mono, scan_at + POLL_SECONDS)
-                slot = math.ceil((earliest - pending["issued_monotonic"]) / POLL_SECONDS)
-                next_scan = min(pending["issued_monotonic"] + slot * POLL_SECONDS,
+                earliest = max(mono, scan_at + interval)
+                slot = math.ceil((earliest - pending["issued_monotonic"]) / interval)
+                next_scan = min(pending["issued_monotonic"] + slot * interval,
                                 pending["submit_monotonic"])
                 if next_scan > mono:
                     self._sleep(next_scan - mono)

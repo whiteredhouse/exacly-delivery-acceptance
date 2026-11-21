@@ -168,6 +168,7 @@ class Relays:
                                      "issued_at": stamp(issued), "submit_by": stamp(submit),
                                      "verify_by": stamp(submit + dt.timedelta(seconds=21)),
                                      "allowed_polls": slots + 1,
+                                     "poll_interval_seconds": 20,
                                      "post_selection_reads": 1,
                                      "future_phase_reads": 3 if value["phase"] == "merge" else 0,
                                      "verification_reserve_seconds": 21}
@@ -288,6 +289,7 @@ class CoordinatorTests(unittest.TestCase):
         checkpoint = self.read("coordinator-prepared.json")
         self.assertEqual(checkpoint["context"], CONTEXT)
         self.assertEqual(proposal["wait_plan"], self.events_named("owner-plan")[0][2])
+        self.assertEqual(proposal["wait_plan"]["poll_interval_seconds"], 20)
         self.assertEqual(checkpoint["wait_plan"], proposal["wait_plan"])
         self.assertEqual(checkpoint["relay"]["payload"]["pending_plan"], proposal["wait_plan"])
         self.assertEqual(proposal["expires_at"], proposal["wait_plan"]["submit_by"])
@@ -308,6 +310,7 @@ class CoordinatorTests(unittest.TestCase):
         waits = self.events_named("owner-wait")
         self.assertEqual([event[1]["phase"] for event in waits], ["merge", "observe"])
         self.assertEqual([event[2] for event in waits], [event[2] for event in self.events_named("owner-plan")])
+        self.assertEqual([event[2]["poll_interval_seconds"] for event in waits], [20, 20])
         self.assertNotEqual(waits[0][1]["challenge"], waits[1][1]["challenge"])
         observer = self.events_named("observe")[0][2]
         self.assertEqual(observer["proposal"]["actual_packet"]["actual_applied_receipt"], self.execution.merge_report["receipt"])
@@ -347,7 +350,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.events_named("observe")), 1)
 
     def test_wrong_manifest_context_phase_and_modified_relay_state_stop_before_execute(self):
-        cases = ("manifest", "context", "phase", "relay", "wait_plan")
+        cases = ("manifest", "context", "phase", "relay", "wait_plan", "poll_interval")
         for case in cases:
             with self.subTest(case=case):
                 if self.private.exists():
@@ -363,9 +366,12 @@ class CoordinatorTests(unittest.TestCase):
                     self.rewrite("coordinator-prepared.json", lambda value: value.update(phase="merge"))
                 elif case == "relay":
                     self.rewrite("coordinator-prepared.json", lambda value: value["relay"]["payload"].update(reads=0))
-                else:
+                elif case == "wait_plan":
                     self.rewrite("coordinator-prepared.json", lambda value: value["wait_plan"].update(
                         submit_by="2026-11-02T12:09:00.000000Z"))
+                else:
+                    self.rewrite("coordinator-prepared.json", lambda value: value["wait_plan"].update(
+                        poll_interval_seconds=45))
                 with self.assertRaises(coordinator.Stopped):
                     self.run_phase("merge")
                 self.assertEqual(self.events_named("execute"), [])

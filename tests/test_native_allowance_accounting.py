@@ -17,6 +17,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 OLD_SPEC_DIGEST = "sha256:57adffb6987860d94bf05f5b657880ab23efba41056ef291d81d291bb7de2c0c"
 OLD_ACCOUNTING_DIGEST = "sha256:e24eff58d035b15e9fbfb5375c465209c2e4cf4a976ad538fa9a18ccf3f20f3e"
+PREVIOUS_SPEC_DIGEST = "sha256:e91e24afa1af0d12798542f6b7872f1d0adbce1815e0e30c2ade343cd730ac4c"
+PREVIOUS_ACCOUNTING_DIGEST = "sha256:09670e7d79f6f56e4428e18023a110fe85689a733e624ab8116e28250c42936e"
 CONTEXT = {
     "repository": "whiteredhouse/exacly-delivery-acceptance",
     "repository_id": 1442278205,
@@ -41,8 +43,11 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
         self.protocol = self.module.load(ROOT)
 
     def assert_semantically_refused(self, mutate):
+        self.assert_spec_semantically_refused(lambda spec: mutate(spec["accounting"]))
+
+    def assert_spec_semantically_refused(self, mutate):
         spec = copy.deepcopy(self.protocol["spec"])
-        mutate(spec["accounting"])
+        mutate(spec)
         profile = copy.deepcopy(self.protocol["profile"])
         profile.update(spec_digest=self.module.digest(spec),
                        accounting_digest=self.module.digest(spec["accounting"]))
@@ -51,6 +56,19 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
                             ACCOUNTING_DIGEST=profile["accounting_digest"]):
             with self.assertRaises(ValueError):
                 self.module.validate_protocol({"profile": profile, "spec": spec})
+
+    def test_timing_policy_cannot_be_reselected_by_repinning_numbers_or_equal_floats(self):
+        timing = {
+            "local_grant_seconds": 1800, "owner_wait_seconds": 1200,
+            "owner_submission_seconds": 900, "maximum_relay_reads": 64,
+            "maximum_polls_per_phase": 25, "poll_interval_seconds": 45,
+        }
+        for name, expected in timing.items():
+            self.assertEqual(self.protocol["spec"][name], expected)
+            for value in (expected + 1, float(expected)):
+                with self.subTest(field=name, value=value, value_type=type(value).__name__):
+                    self.assert_spec_semantically_refused(
+                        lambda spec, name=name, value=value: spec.update({name: value}))
 
     def receipt(self):
         command = self.module.allowance_command(self.protocol, CONTEXT)
@@ -81,7 +99,7 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
             schema_version="0.1.0", predecessor=first,
             charged_prior_limits=copy.deepcopy(accounting["additional_limits"]),
             aggregate_limits={"operations": 2, "wall_time_ms": 720000, "reads": 384, "rollbacks": 0},
-            history_baseline=copy.deepcopy(accounting["history_baseline"][:-1]),
+            history_baseline=copy.deepcopy(accounting["history_baseline"][:11]),
         )
         self.assertEqual(self.module.digest(old), OLD_ACCOUNTING_DIGEST)
         fields = [
@@ -97,10 +115,35 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
             name + "=" + str(value) for name, value in fields)
         return old, command
 
+    def previous_accounting_and_command(self):
+        previous = copy.deepcopy(self.protocol["spec"]["accounting"])
+        previous.update(
+            consumed_allocations=copy.deepcopy(previous["consumed_allocations"][:2]),
+            charged_prior_limits={"operations": 2, "wall_time_ms": 720000, "reads": 384, "rollbacks": 0},
+            aggregate_limits={"operations": 3, "wall_time_ms": 1080000, "reads": 576, "rollbacks": 0},
+            history_baseline=copy.deepcopy(previous["history_baseline"][:12]),
+        )
+        self.assertEqual(self.module.digest(previous), PREVIOUS_ACCOUNTING_DIGEST)
+        fields = [
+            ("run", CONTEXT["run_id"]), ("attempt", 1), ("source", CONTEXT["source"]),
+            ("manifest", PREVIOUS_SPEC_DIGEST), ("accounting", PREVIOUS_ACCOUNTING_DIGEST),
+            ("original_goal", previous["original_objective"]["original_goal"]),
+            ("consumed_runs", "41526436188,41665083190"),
+            ("charged_prior_operations", 2), ("charged_prior_wall_time_ms", 720000),
+            ("charged_prior_reads", 384), ("charged_prior_rollbacks", 0),
+            ("additional_operations", 1), ("additional_wall_time_ms", 360000), ("additional_reads", 192),
+            ("aggregate_operations", 3), ("aggregate_wall_time_ms", 1080000),
+            ("aggregate_reads", 576), ("rollbacks", 0),
+        ]
+        command = "/exacly-native-trial supplement " + " ".join(
+            name + "=" + str(value) for name, value in fields)
+        return previous, command
+
     def test_consumed_records_cannot_be_dropped_duplicated_or_reordered(self):
         changes = (
             lambda a: a["consumed_allocations"].pop(0),
             lambda a: a["consumed_allocations"].pop(1),
+            lambda a: a["consumed_allocations"].pop(2),
             lambda a: a["consumed_allocations"].clear(),
             lambda a: a["consumed_allocations"].append(copy.deepcopy(a["consumed_allocations"][0])),
             lambda a: a["consumed_allocations"].reverse(),
@@ -110,7 +153,7 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
                 self.assert_semantically_refused(mutate)
 
     def test_each_consumed_charge_is_full_even_when_totals_are_rebalanced(self):
-        for index in (0, 1):
+        for index in range(len(self.protocol["spec"]["accounting"]["consumed_allocations"])):
             for key in ("operations", "wall_time_ms", "reads", "rollbacks"):
                 with self.subTest(allocation=index, budget=key):
                     def mutate(accounting, index=index, key=key):
@@ -124,7 +167,7 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
                     self.assert_semantically_refused(mutate)
 
     def test_consumed_charges_are_integers_not_equal_booleans_or_floats(self):
-        for index in (0, 1):
+        for index in range(len(self.protocol["spec"]["accounting"]["consumed_allocations"])):
             for value in (True, 1.0):
                 with self.subTest(allocation=index, value_type=type(value).__name__):
                     self.assert_semantically_refused(
@@ -153,7 +196,7 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
             "workflow_id": 1, "title": "renamed-native-trial",
             "status": "in_progress", "conclusion": "cancelled",
         }
-        for index in (0, 1):
+        for index in range(len(self.protocol["spec"]["accounting"]["consumed_allocations"])):
             for name, value in changes.items():
                 with self.subTest(allocation=index, field=name):
                     self.assert_semantically_refused(
@@ -162,7 +205,7 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
 
     def test_native_history_and_consumed_allocations_cover_each_other_exactly(self):
         def remove_native(accounting):
-            consumed_id = accounting["consumed_allocations"][1]["run_id"]
+            consumed_id = accounting["consumed_allocations"][-1]["run_id"]
             accounting["history_baseline"] = [
                 item for item in accounting["history_baseline"] if item["run_id"] != consumed_id]
 
@@ -203,12 +246,18 @@ class CumulativeAllowanceAccountingTests(unittest.TestCase):
 
     def test_old_command_accounting_and_receipt_cannot_select_new_capacity(self):
         old_accounting, old_command = self.old_accounting_and_command()
-        self.assertNotEqual(old_command, self.receipt()["command"])
+        self.assert_historical_receipt_refused(old_accounting, old_command, OLD_ACCOUNTING_DIGEST)
+
+    def test_previous_cumulative_command_accounting_and_receipt_cannot_select_new_capacity(self):
+        previous, command = self.previous_accounting_and_command()
+        self.assert_historical_receipt_refused(previous, command, PREVIOUS_ACCOUNTING_DIGEST)
+
+    def assert_historical_receipt_refused(self, accounting, command, accounting_digest):
+        self.assertNotEqual(command, self.receipt()["command"])
         changes = (
-            {"command": old_command},
-            {"accounting": old_accounting, "accounting_digest": OLD_ACCOUNTING_DIGEST},
-            {"command": old_command, "accounting": old_accounting,
-             "accounting_digest": OLD_ACCOUNTING_DIGEST},
+            {"command": command},
+            {"accounting": accounting, "accounting_digest": accounting_digest},
+            {"command": command, "accounting": accounting, "accounting_digest": accounting_digest},
         )
         for number, changed in enumerate(changes):
             with self.subTest(replay=number):

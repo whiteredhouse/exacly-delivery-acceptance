@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import hashlib
+import hmac
 import json
 from types import SimpleNamespace
 import unittest
@@ -119,10 +121,18 @@ class OwnerWaitTimingTests(unittest.TestCase):
         )
         return self.client
 
+    def reseal_fixture_state(self, state):
+        # An authentic fixture MAC lets schema/policy checks be exercised
+        # independently of the already-tested integrity rejection.
+        state["mac"] = hmac.new(self.token.encode("ascii"),
+                                self.relay._canonical(state["payload"]), hashlib.sha256).hexdigest()
+        return state
+
     def test_public_window_ends_with_actual_last_poll_instead_of_ten_minute_claim(self):
         self.setup(supplemental=False)
         plan = self.plan()
         self.assertEqual(plan["allowed_polls"], 25)
+        self.assertEqual(plan["poll_interval_seconds"], 20)
         self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=480))
         self.assertEqual(date(plan["verify_by"]) - date(plan["submit_by"]), dt.timedelta(seconds=21))
         self.assertLess(date(plan["verify_by"]), date(plan["issued_at"]) + dt.timedelta(seconds=600))
@@ -138,28 +148,44 @@ class OwnerWaitTimingTests(unittest.TestCase):
         self.assertEqual(self.client.reads, 10)
         before = len(self.backend.calls)
         plan = self.plan()
-        self.assertEqual(plan["allowed_polls"], 25)
+        self.assertEqual(plan["allowed_polls"], 21)
+        self.assertEqual(plan["poll_interval_seconds"], 45)
         self.assertEqual(plan["post_selection_reads"], 6)
         self.assertEqual(plan["future_phase_reads"], 8)
         self.assertEqual(plan["verification_reserve_seconds"], 71)
-        self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=480))
-        self.assertEqual(date(plan["verify_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=551))
+        self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=900))
+        self.assertEqual(date(plan["verify_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=971))
         self.assertEqual(len(self.backend.calls), before)
         self.assertEqual(self.relay.MAX_READS, 64)
         self.assertEqual(self.relay.MAX_POLLS, 25)
         self.assertEqual(self.relay.MAX_SECONDS, 600)
+        self.assertEqual(self.relay.MAX_JOB_SECONDS, 1800)
+
+    def test_fifteen_minute_submission_window_uses_fewer_polls_without_more_reads(self):
+        plan = self.plan()
+        with self.assertRaises(self.relay.RelayStopped) as stopped:
+            self.client.wait(self.selection(), plan=plan)
+        self.assertEqual(stopped.exception.code, self.relay.RelayStopCode.POLL_BUDGET_EXHAUSTED)
+        self.assertEqual(self.clock.wall, 900)
+        self.assertEqual(self.comment_polls, 21)
+        self.assertEqual(self.client.reads, 31)
+        self.assertEqual(self.clock.sleeps, [45] * 20)
+        self.assertLessEqual(self.client.reads + plan["post_selection_reads"] + plan["future_phase_reads"], 64)
 
     def test_last_poll_accepts_pre_cutoff_comment_and_finishes_reserved_verification(self):
-        plan = self.plan()
-        self.last_poll_approval(plan)
-        self.read_latency = 10
-        receipt = self.client.wait(self.selection(), plan=plan)
-        self.assertEqual(receipt["created_at"], (date(plan["submit_by"]) - dt.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))
-        self.assertGreater(self.clock.now(), date(plan["submit_by"]))
-        self.client.recheck_host()
-        self.assertLess(self.clock.now(), date(plan["verify_by"]))
-        self.assertEqual(self.comment_polls, 25)
-        self.assertEqual(self.client.reads, 41)
+        for latency in (0, 5, 10):
+            with self.subTest(read_latency=latency):
+                self.setup()
+                plan = self.plan()
+                self.last_poll_approval(plan)
+                self.read_latency = latency
+                receipt = self.client.wait(self.selection(), plan=plan)
+                self.assertEqual(receipt["created_at"], (date(plan["submit_by"]) - dt.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+                self.assertGreaterEqual(self.clock.now(), date(plan["submit_by"]))
+                self.client.recheck_host()
+                self.assertLess(self.clock.now(), date(plan["verify_by"]))
+                self.assertEqual(self.comment_polls, 21)
+                self.assertEqual(self.client.reads, 37)
 
     def test_comment_created_exactly_at_public_submission_cutoff_is_refused(self):
         plan = self.plan()
@@ -218,7 +244,7 @@ class OwnerWaitTimingTests(unittest.TestCase):
         self.client.reads = 48
         plan = self.plan()
         self.assertEqual(plan["allowed_polls"], 2)
-        self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=20))
+        self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=45))
         self.last_poll_approval(plan)
         self.client.wait(self.selection(), plan=plan)
         self.client.recheck_host()
@@ -226,7 +252,7 @@ class OwnerWaitTimingTests(unittest.TestCase):
         observe = self.plan("observe")
         self.assertEqual(observe["allowed_polls"], 2)
         self.assertEqual(observe["future_phase_reads"], 0)
-        self.assertEqual(date(observe["submit_by"]) - date(observe["issued_at"]), dt.timedelta(seconds=20))
+        self.assertEqual(date(observe["submit_by"]) - date(observe["issued_at"]), dt.timedelta(seconds=45))
 
     def test_insufficient_get_reserve_stops_before_publication_or_provider_read(self):
         self.client.reads = 49
@@ -237,86 +263,105 @@ class OwnerWaitTimingTests(unittest.TestCase):
         self.assertEqual(self.client.reads, 49)
         self.assertEqual(len(self.backend.calls), before)
 
-    def test_observer_window_uses_shared_remaining_gets_after_full_merge_polling(self):
+    def test_observer_window_uses_shared_remaining_gets_and_original_job_after_full_merge_wait(self):
         merge = self.plan()
         self.last_poll_approval(merge)
         self.client.wait(self.selection(), plan=merge)
         self.client.recheck_host()
-        self.assertEqual(self.client.reads, 41)
+        self.assertEqual(self.client.reads, 37)
         observe = self.plan("observe")
-        self.assertEqual(observe["allowed_polls"], 17)
-        self.assertEqual(date(observe["submit_by"]) - date(observe["issued_at"]), dt.timedelta(seconds=320))
+        self.assertEqual(observe["allowed_polls"], 19)
+        self.assertEqual(date(observe["submit_by"]) - date(observe["issued_at"]), dt.timedelta(seconds=810))
+        self.assertEqual(date(observe["verify_by"]) - relay_fixture.NOW, dt.timedelta(seconds=1781))
         self.assertEqual(observe["post_selection_reads"], 6)
         self.assertEqual(observe["future_phase_reads"], 0)
+        self.assertLessEqual(self.client.reads + observe["allowed_polls"] + observe["post_selection_reads"], 64)
+
+    def test_time_spent_in_native_effect_and_replay_cannot_reset_the_observer_job_window(self):
+        merge = self.plan()
+        self.last_poll_approval(merge)
+        self.client.wait(self.selection(), plan=merge)
+        self.client.recheck_host()
+        self.clock.advance(300)
+        observe = self.plan("observe")
+        self.assertEqual(observe["allowed_polls"], 12)
+        self.assertEqual(date(observe["submit_by"]) - date(observe["issued_at"]), dt.timedelta(seconds=495))
+        self.assertEqual(date(observe["verify_by"]) - relay_fixture.NOW, dt.timedelta(seconds=1766))
+        self.assertEqual(self.client.reads, 37)
 
     def test_credential_deadline_can_shorten_but_never_extend_the_public_plan(self):
-        lease = self.clock.now() + dt.timedelta(seconds=100)
+        lease = self.clock.now() + dt.timedelta(seconds=160)
         plan = self.plan(lease=lease)
         self.assertEqual(plan["allowed_polls"], 2)
-        self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=20))
-        self.assertEqual(date(plan["verify_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=91))
+        self.assertEqual(date(plan["submit_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=45))
+        self.assertEqual(date(plan["verify_by"]) - date(plan["issued_at"]), dt.timedelta(seconds=116))
         self.assertLess(date(plan["verify_by"]), lease)
 
     def test_too_short_credential_cannot_publish_a_window_without_verification_reserve(self):
         before = len(self.backend.calls)
         with self.assertRaises(self.relay.RelayStopped):
-            self.plan(lease=self.clock.now() + dt.timedelta(seconds=90))
+            self.plan(lease=self.clock.now() + dt.timedelta(seconds=115))
         self.assertEqual(len(self.backend.calls), before)
 
     def test_upload_and_step_restore_preserve_public_cutoffs_and_do_not_catch_up(self):
         plan = self.plan()
         state = self.client.export_state()
-        self.clock.advance(120)
+        self.clock.advance(600)
         self.restore(state)
         restored_plan = self.client.export_state()["payload"]["pending_wait"]["plan"]
         self.assertEqual(restored_plan, plan)
-        self.approve(created=relay_fixture.NOW + dt.timedelta(seconds=90))
+        self.approve(created=relay_fixture.NOW + dt.timedelta(seconds=590))
         receipt = self.client.wait(self.selection(), plan=plan)
-        self.assertEqual(receipt["created_at"], "2026-11-02T12:01:30Z")
+        self.assertEqual(receipt["created_at"], "2026-11-02T12:09:50Z")
         scans = [wall for path, wall, _ in self.request_times if path == self.relay.COMMENTS]
-        self.assertEqual(scans, [120])
+        self.assertEqual(scans, [600])
 
-    def test_off_slot_upload_delay_skips_missed_scans_and_preserves_twenty_second_spacing(self):
-        for delay, second in ((5, 40), (25, 60)):
-            with self.subTest(delay=delay):
-                self.setup()
-                plan = self.plan()
-                state = self.client.export_state()
-                self.clock.advance(delay)
-                self.restore(state)
-                with self.assertRaises(self.relay.RelayStopped):
-                    self.client.wait(self.selection(), plan=plan)
-                scans = [wall for path, wall, _ in self.request_times if path == self.relay.COMMENTS]
-                self.assertEqual(scans[:2], [delay, second])
-                self.assertEqual(scans[-1], 480)
-                self.assertLessEqual(len(scans), plan["allowed_polls"])
-                self.assertTrue(all(later - earlier >= 20 for earlier, later in zip(scans, scans[1:])))
+    def test_off_slot_upload_delay_preserves_the_selected_poll_spacing_without_catch_up(self):
+        for supplemental, cutoff, cases in (
+            (False, 480, ((5, 40), (25, 60))),
+            (True, 900, ((5, 90), (50, 135))),
+        ):
+            for delay, second in cases:
+                with self.subTest(supplemental=supplemental, delay=delay):
+                    self.setup(supplemental=supplemental)
+                    plan = self.plan()
+                    state = self.client.export_state()
+                    self.clock.advance(delay)
+                    self.restore(state)
+                    with self.assertRaises(self.relay.RelayStopped):
+                        self.client.wait(self.selection(), plan=plan)
+                    scans = [wall for path, wall, _ in self.request_times if path == self.relay.COMMENTS]
+                    self.assertEqual(scans[:2], [delay, second])
+                    self.assertEqual(scans[-1], cutoff)
+                    self.assertLessEqual(len(scans), plan["allowed_polls"])
+                    self.assertTrue(all(later - earlier >= plan["poll_interval_seconds"]
+                                        for earlier, later in zip(scans, scans[1:])))
 
     def test_restore_near_submission_cutoff_waits_for_final_slot_without_burst(self):
         plan = self.plan()
         state = self.client.export_state()
-        self.clock.advance(470)
+        self.clock.advance(880)
         self.restore(state)
-        self.approve(created=relay_fixture.NOW + dt.timedelta(seconds=469))
+        self.approve(created=relay_fixture.NOW + dt.timedelta(seconds=879))
         self.client.wait(self.selection(), plan=plan)
         scans = [wall for path, wall, _ in self.request_times if path == self.relay.COMMENTS]
-        self.assertEqual(scans, [480])
+        self.assertEqual(scans, [900])
 
     def test_late_wakeup_near_final_slot_defers_every_scan_to_preserve_spacing(self):
         plan = self.plan()
 
         def wake_late(seconds):
             self.clock.sleep(seconds)
-            if self.clock.monotonic == 460:
+            if self.clock.monotonic == 855:
                 self.clock.advance(1)
 
         self.client._sleep = wake_late
         with self.assertRaises(self.relay.RelayStopped):
             self.client.wait(self.selection(), plan=plan)
         scans = [wall for path, wall, _ in self.request_times if path == self.relay.COMMENTS]
-        self.assertEqual(scans[-2:], [440, 480])
-        self.assertNotIn(461, scans)
-        self.assertTrue(all(later - earlier >= 20 for earlier, later in zip(scans, scans[1:])))
+        self.assertEqual(scans[-2:], [810, 900])
+        self.assertNotIn(856, scans)
+        self.assertTrue(all(later - earlier >= 45 for earlier, later in zip(scans, scans[1:])))
 
     def test_comment_matching_before_this_proposal_publication_is_not_a_fresh_selection(self):
         self.clock.advance(100)
@@ -335,7 +380,7 @@ class OwnerWaitTimingTests(unittest.TestCase):
             self.plan()
         self.assertEqual(stopped.exception.code, self.relay.RelayStopCode.PHASE_REUSED)
         self.assertEqual(len(self.backend.calls), before)
-        self.assertEqual(plan["submit_by"], "2026-11-02T12:08:00.000000Z")
+        self.assertEqual(plan["submit_by"], "2026-11-02T12:15:00.000000Z")
 
     def test_starting_or_restoring_wait_at_submission_cutoff_fails_without_a_get(self):
         for action in ("wait", "restore"):
@@ -343,8 +388,8 @@ class OwnerWaitTimingTests(unittest.TestCase):
                 self.setup()
                 plan = self.plan()
                 state = self.client.export_state()
-                self.clock.advance(480)
-                self.approve(created=relay_fixture.NOW + dt.timedelta(seconds=479))
+                self.clock.advance(900)
+                self.approve(created=relay_fixture.NOW + dt.timedelta(seconds=899))
                 before = len(self.backend.calls)
                 with self.assertRaises(self.relay.RelayStopped) as stopped:
                     if action == "wait":
@@ -361,6 +406,7 @@ class OwnerWaitTimingTests(unittest.TestCase):
             lambda p: p["pending_wait"]["plan"].update(submit_by="2026-11-02T12:20:00.000000Z"),
             lambda p: p["pending_wait"]["plan"].update(verify_by="2026-11-02T12:21:00.000000Z"),
             lambda p: p["pending_wait"].update(verify_monotonic=1260),
+            lambda p: p["pending_wait"]["plan"].update(poll_interval_seconds=20),
             lambda p: p.update(reads=0),
         )
         for index, mutate in enumerate(mutations):
@@ -373,9 +419,43 @@ class OwnerWaitTimingTests(unittest.TestCase):
     def test_old_checkpoint_shape_is_not_treated_as_a_new_wait_allowance(self):
         self.plan()
         state = self.client.export_state()
-        state["payload"]["schema_version"] = "0.1.0"
-        with self.assertRaises(self.relay.RelayStopped):
-            self.restore(state)
+        for version in ("0.1.0", "0.2.0", "0.3.0"):
+            with self.subTest(version=version):
+                changed = copy.deepcopy(state)
+                changed["payload"]["schema_version"] = version
+                changed["payload"]["pending_wait"]["plan"].pop("poll_interval_seconds")
+                before = len(self.backend.calls)
+                with self.assertRaises(self.relay.RelayStopped) as stopped:
+                    self.restore(self.reseal_fixture_state(changed))
+                self.assertEqual(stopped.exception.code, self.relay.RelayStopCode.CHECKPOINT_INVALID)
+                self.assertEqual(len(self.backend.calls), before)
+
+    def test_authentic_checkpoint_cannot_change_source_selected_cadence_or_submission_cap(self):
+        self.plan()
+        original = self.client.export_state()
+        for interval, polls, submission in ((20, 21, 400), (45, 25, 1080)):
+            with self.subTest(interval=interval, submission=submission):
+                changed = copy.deepcopy(original)
+                pending = changed["payload"]["pending_wait"]
+                plan = pending["plan"]
+                issued = date(plan["issued_at"])
+                verification = submission + plan["verification_reserve_seconds"]
+                plan.update(
+                    poll_interval_seconds=interval, allowed_polls=polls,
+                    submit_by=(issued + dt.timedelta(seconds=submission)).isoformat(
+                        timespec="microseconds").replace("+00:00", "Z"),
+                    verify_by=(issued + dt.timedelta(seconds=verification)).isoformat(
+                        timespec="microseconds").replace("+00:00", "Z"),
+                )
+                pending.update(submit_monotonic=pending["issued_monotonic"] + submission,
+                               verify_monotonic=pending["issued_monotonic"] + verification)
+                changed["payload"].update(deadline_monotonic=pending["verify_monotonic"],
+                                          expires_at=plan["verify_by"])
+                before = len(self.backend.calls)
+                with self.assertRaises(self.relay.RelayStopped) as stopped:
+                    self.restore(self.reseal_fixture_state(changed))
+                self.assertEqual(stopped.exception.code, self.relay.RelayStopCode.CHECKPOINT_INVALID)
+                self.assertEqual(len(self.backend.calls), before)
 
     def test_either_clock_reaching_verification_cutoff_cannot_return_owner_authority(self):
         for moving in ("wall", "monotonic"):
@@ -383,7 +463,7 @@ class OwnerWaitTimingTests(unittest.TestCase):
                 self.setup()
                 plan = self.plan()
                 self.approve()
-                setattr(self.clock, moving, 551)
+                setattr(self.clock, moving, 971)
                 before = len(self.backend.calls)
                 with self.assertRaises(self.relay.RelayStopped):
                     self.client.wait(self.selection(), plan=plan)
@@ -407,11 +487,22 @@ class OwnerWaitTimingTests(unittest.TestCase):
         merge = self.plan()
         self.client.wait(self.selection(), plan=merge)
         self.client.recheck_host()
-        self.clock.advance(1700)
+        self.clock.advance(1600)
         observe = self.plan("observe", lease=relay_fixture.NOW + dt.timedelta(seconds=3600))
-        self.assertEqual(date(observe["submit_by"]) - relay_fixture.NOW, dt.timedelta(seconds=1720))
-        self.assertEqual(date(observe["verify_by"]) - relay_fixture.NOW, dt.timedelta(seconds=1791))
+        self.assertEqual(date(observe["submit_by"]) - relay_fixture.NOW, dt.timedelta(seconds=1690))
+        self.assertEqual(date(observe["verify_by"]) - relay_fixture.NOW, dt.timedelta(seconds=1761))
         self.assertLess(date(observe["verify_by"]), relay_fixture.NOW + dt.timedelta(seconds=1800))
+
+    def test_too_little_original_job_time_cannot_publish_even_with_a_longer_candidate_lease(self):
+        self.approve()
+        merge = self.plan()
+        self.client.wait(self.selection(), plan=merge)
+        self.client.recheck_host()
+        self.clock.advance(1700)
+        before = len(self.backend.calls)
+        with self.assertRaises(self.relay.RelayStopped):
+            self.plan("observe", lease=relay_fixture.NOW + dt.timedelta(seconds=3600))
+        self.assertEqual(len(self.backend.calls), before)
 
     def test_sender_cannot_forge_an_owned_owner_denial_stop_reason(self):
         plan = self.plan()
