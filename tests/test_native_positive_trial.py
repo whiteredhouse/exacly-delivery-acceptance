@@ -60,11 +60,13 @@ class Packets:
     def prepare(self, private, spec, context, core, token, installation_id, *, now):
         self.events.append(("packet-prepare", installation_id, copy.deepcopy(context)))
         private.mkdir(mode=0o700)
+        authority_expiry = coordinator.timestamp(now + dt.timedelta(seconds=self.lease_seconds))
         prepared = {"private_dir": str(private), "core_source": str(core), "spec": spec,
                     "context": copy.deepcopy(context), "selection": selection("merge"),
                     "proposal": {"status": "proposed", "authority_granted": False,
+                                 "operation_approval": {"expires_at": authority_expiry},
                                  "configuration": {"actor": {"grant": {
-                                     "not_after": coordinator.timestamp(now + dt.timedelta(seconds=self.lease_seconds))}}}},
+                                     "not_after": authority_expiry}}}},
                     "paths": {"journal": str(private / "journal.json")}, "_token": token}
         coordinator.create_private(private / "journal.json", {"original_journal": True}, (token, RELAY_TOKEN))
         self.prepared = prepared
@@ -85,10 +87,12 @@ class Packets:
     def build_observer(self, prepared, report, *, now):
         self.events.append(("observer-draft", copy.deepcopy(report)))
         actual_packet = {"read_only": True, "actual_applied_receipt": report["receipt"],
-                         "run_id": prepared["context"]["run_id"]}
+                         "run_id": prepared["context"]["run_id"],
+                         "read_approval": {"expires_at": prepared["proposal"]["configuration"]["actor"]["grant"]["not_after"]}}
         observer_selection = selection("observe")
         observer_selection["packet_digest"] = coordinator.digest(actual_packet)
-        observer = {"selection": observer_selection, "proposal": {"actual_packet": actual_packet},
+        observer = {"selection": observer_selection,
+                    "proposal": {"actual_packet": actual_packet, "packet": actual_packet},
                     "paths": {"packet": str(Path(prepared["private_dir"]) / "observer-packet.json")}}
         self.write_safe(Path(observer["paths"]["packet"]), actual_packet, prepared["_token"])
         self.write_safe(Path(prepared["private_dir"]) / "observer-state.json", observer, prepared["_token"])
@@ -97,8 +101,9 @@ class Packets:
 
 
 class Relays:
-    def __init__(self, events):
+    def __init__(self, events, *, clock):
         self.events = events
+        self.clock = clock
         self.wait_error = None
         self.host_error = None
         self.receipts = []
@@ -110,6 +115,16 @@ class Relays:
                 self.context = copy.deepcopy(context)
                 self.phases = []
                 self.reads = 0
+                self.created_at = outer.clock()
+                self.pending_plan = None
+
+            @staticmethod
+            def approval_command(value):
+                return outer.approval_command(value)
+
+            @staticmethod
+            def deny_command(value):
+                return outer.deny_command(value)
 
             def check_host(self):
                 outer.events.append(("host",))
@@ -118,7 +133,8 @@ class Relays:
                 self.reads = 4
 
             def export_state(self):
-                payload = {"context": self.context, "reads": self.reads, "phases": self.phases}
+                payload = {"context": self.context, "reads": self.reads, "phases": self.phases,
+                           "created_at": coordinator.timestamp(self.created_at), "pending_plan": self.pending_plan}
                 return {"payload": copy.deepcopy(payload), "fixture_mac": coordinator.digest(payload)}
 
             @classmethod
@@ -129,14 +145,46 @@ class Relays:
                 coordinator.require(state["payload"]["context"] == context)
                 client.reads = state["payload"]["reads"]
                 client.phases = list(state["payload"]["phases"])
+                client.created_at = coordinator.date(state["payload"]["created_at"])
+                client.pending_plan = copy.deepcopy(state["payload"]["pending_plan"])
                 return client
 
-            def wait(self, value, *, expires_at):
-                outer.events.append(("owner-wait", copy.deepcopy(value), expires_at))
+            def plan_wait(self, value, *, credential_expires_at):
+                coordinator.require(self.pending_plan is None, "fixture_plan_cannot_restart")
+                coordinator.require(value["phase"] == ("merge" if not self.phases else "observe"))
+                issued = outer.clock()
+                # Scheduling boundaries are tested against the real Relay separately.
+                # This fixture binds the coordinator's published plan and original job clock.
+                cap = min(issued + dt.timedelta(seconds=600), self.created_at + dt.timedelta(seconds=1800),
+                          credential_expires_at)
+                slots = min(24, int(((cap - issued).total_seconds() - 21) // 20))
+                coordinator.require(slots >= 1, "fixture_no_usable_selection_window")
+                submit = issued + dt.timedelta(seconds=slots * 20)
+
+                def stamp(instant):
+                    return instant.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+                self.pending_plan = {"phase": value["phase"], "selection_digest": coordinator.digest(value),
+                                     "issued_at": stamp(issued), "submit_by": stamp(submit),
+                                     "verify_by": stamp(submit + dt.timedelta(seconds=21)),
+                                     "allowed_polls": slots + 1,
+                                     "post_selection_reads": 1,
+                                     "future_phase_reads": 3 if value["phase"] == "merge" else 0,
+                                     "verification_reserve_seconds": 21}
+                outer.events.append(("owner-plan", copy.deepcopy(value), copy.deepcopy(self.pending_plan)))
+                return copy.deepcopy(self.pending_plan)
+
+            def wait(self, value, *, plan):
+                coordinator.require(plan == self.pending_plan
+                                    and plan["selection_digest"] == coordinator.digest(value), "fixture_plan_changed")
+                coordinator.require(outer.clock() <= coordinator.date(plan["submit_by"]),
+                                    "owner_selection_deadline_expired")
+                outer.events.append(("owner-wait", copy.deepcopy(value), copy.deepcopy(plan)))
                 if outer.wait_error:
                     raise outer.wait_error
                 coordinator.require(value["phase"] == ("merge" if not self.phases else "observe"))
                 self.phases.append(value["phase"])
+                self.pending_plan = None
                 self.reads += 2
                 receipt = {"selection": copy.deepcopy(value), "fixture_fresh_owner_receipt": len(outer.receipts) + 1}
                 outer.receipts.append(receipt)
@@ -197,9 +245,9 @@ class CoordinatorTests(unittest.TestCase):
         self.core = self.temp / "controlled-core"
         self.core.mkdir()
         self.events = []
-        self.packets, self.relays = Packets(self.events), Relays(self.events)
-        self.execution = Execution(self.events, self.relays)
         self.now = NOW
+        self.packets, self.relays = Packets(self.events), Relays(self.events, clock=lambda: self.now)
+        self.execution = Execution(self.events, self.relays)
         self.output = io.StringIO()
         self.environment = {"CANARY_INSTALLATION_ID": "177653055", "RUNNER_TEMP": str(self.temp),
                             "CANARY_APP_TOKEN": APP_TOKEN, "CANARY_RELAY_TOKEN": RELAY_TOKEN}
@@ -237,7 +285,13 @@ class CoordinatorTests(unittest.TestCase):
         self.assertFalse(proposal["authority_granted"])
         self.assertEqual(proposal["owner"], {"id": 1679024, "login": "p1c2u"})
         self.assertEqual(proposal["comment_destination"], "https://github.com/" + coordinator.REPOSITORY + "/pull/5")
-        self.assertEqual(self.read("coordinator-prepared.json")["context"], CONTEXT)
+        checkpoint = self.read("coordinator-prepared.json")
+        self.assertEqual(checkpoint["context"], CONTEXT)
+        self.assertEqual(proposal["wait_plan"], self.events_named("owner-plan")[0][2])
+        self.assertEqual(checkpoint["wait_plan"], proposal["wait_plan"])
+        self.assertEqual(checkpoint["relay"]["payload"]["pending_plan"], proposal["wait_plan"])
+        self.assertEqual(proposal["expires_at"], proposal["wait_plan"]["submit_by"])
+        self.assertEqual(proposal["verification_expires_at"], proposal["wait_plan"]["verify_by"])
         self.assertTrue((self.private / "prepare-consumed.json").exists())
         for path in self.private.iterdir():
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
@@ -253,6 +307,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.events_named("observe")), 1)
         waits = self.events_named("owner-wait")
         self.assertEqual([event[1]["phase"] for event in waits], ["merge", "observe"])
+        self.assertEqual([event[2] for event in waits], [event[2] for event in self.events_named("owner-plan")])
         self.assertNotEqual(waits[0][1]["challenge"], waits[1][1]["challenge"])
         observer = self.events_named("observe")[0][2]
         self.assertEqual(observer["proposal"]["actual_packet"]["actual_applied_receipt"], self.execution.merge_report["receipt"])
@@ -292,7 +347,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.events_named("observe")), 1)
 
     def test_wrong_manifest_context_phase_and_modified_relay_state_stop_before_execute(self):
-        cases = ("manifest", "context", "phase", "relay")
+        cases = ("manifest", "context", "phase", "relay", "wait_plan")
         for case in cases:
             with self.subTest(case=case):
                 if self.private.exists():
@@ -306,8 +361,11 @@ class CoordinatorTests(unittest.TestCase):
                     self.rewrite("coordinator-prepared.json", lambda value: value["context"].update(source="0" * 40))
                 elif case == "phase":
                     self.rewrite("coordinator-prepared.json", lambda value: value.update(phase="merge"))
-                else:
+                elif case == "relay":
                     self.rewrite("coordinator-prepared.json", lambda value: value["relay"]["payload"].update(reads=0))
+                else:
+                    self.rewrite("coordinator-prepared.json", lambda value: value["wait_plan"].update(
+                        submit_by="2026-11-02T12:09:00.000000Z"))
                 with self.assertRaises(coordinator.Stopped):
                     self.run_phase("merge")
                 self.assertEqual(self.events_named("execute"), [])
@@ -347,12 +405,13 @@ class CoordinatorTests(unittest.TestCase):
                 self.assertEqual(len(self.events_named("owner-wait")), 1)
                 self.assertEqual(self.events_named("observe"), [])
 
-    def test_expired_proposal_stops_before_wait_and_does_not_renew_upload_window(self):
+    def test_expired_proposal_stops_before_owner_reads_and_does_not_renew_upload_window(self):
         self.run_phase("prepare")
         issued = self.read("merge-approval-instructions.json")
-        self.assertEqual(issued["proposal_issued_at"], "2026-11-02T12:00:00Z")
-        self.assertEqual(issued["expires_at"], "2026-11-02T12:10:00Z")
-        self.now += dt.timedelta(seconds=601)
+        self.assertEqual(issued["proposal_issued_at"], "2026-11-02T12:00:00.000000Z")
+        self.assertEqual(issued["expires_at"], "2026-11-02T12:08:00.000000Z")
+        self.assertEqual(issued["verification_expires_at"], "2026-11-02T12:08:21.000000Z")
+        self.now += dt.timedelta(seconds=481)
         with self.assertRaisesRegex(coordinator.Stopped, "deadline_expired"):
             self.run_phase("merge")
         self.assertEqual(self.events_named("owner-wait"), [])
@@ -360,22 +419,38 @@ class CoordinatorTests(unittest.TestCase):
 
     def test_artifact_upload_delay_reduces_remaining_wait_instead_of_extending_deadline(self):
         self.run_phase("prepare")
+        published_plan = self.read("merge-approval-instructions.json")["wait_plan"]
         self.now += dt.timedelta(seconds=120)
         self.run_phase("merge")
         wait = self.events_named("owner-wait")[0]
-        self.assertEqual(wait[2], NOW + dt.timedelta(seconds=600))
-        self.assertEqual((wait[2] - self.now).total_seconds(), 480)
-        self.assertEqual(self.read("observer-approval-instructions.json")["expires_at"],
-                         coordinator.timestamp(self.now + dt.timedelta(seconds=600)))
+        self.assertEqual(wait[2], published_plan)
+        self.assertEqual(coordinator.date(wait[2]["submit_by"]), NOW + dt.timedelta(seconds=480))
+        self.assertEqual((coordinator.date(wait[2]["submit_by"]) - self.now).total_seconds(), 360)
+        self.assertEqual(coordinator.date(wait[2]["verify_by"]), NOW + dt.timedelta(seconds=501))
+        observer = self.read("observer-approval-instructions.json")
+        self.assertEqual(coordinator.date(observer["expires_at"]), self.now + dt.timedelta(seconds=480))
+        self.assertEqual(coordinator.date(observer["verification_expires_at"]), self.now + dt.timedelta(seconds=501))
+        self.assertEqual(len(self.events_named("owner-plan")), 2)
 
     def test_grant_expiry_caps_proposal_and_already_expired_grant_cannot_wait(self):
-        self.packets.lease_seconds = 30
+        self.packets.lease_seconds = 50
         self.run_phase("prepare")
-        self.assertEqual(self.read("merge-approval-instructions.json")["expires_at"], "2026-11-02T12:00:30Z")
-        self.now += dt.timedelta(seconds=31)
+        proposal = self.read("merge-approval-instructions.json")
+        self.assertEqual(proposal["expires_at"], "2026-11-02T12:00:20.000000Z")
+        self.assertEqual(proposal["verification_expires_at"], "2026-11-02T12:00:41.000000Z")
+        self.now += dt.timedelta(seconds=51)
         with self.assertRaises(coordinator.Stopped):
             self.run_phase("merge")
         self.assertEqual(self.events_named("owner-wait"), [])
+
+    def test_unusable_grant_stops_before_publishing_a_selection_plan(self):
+        self.packets.lease_seconds = 30
+        with self.assertRaisesRegex(coordinator.Stopped, "no_usable_selection_window"):
+            self.run_phase("prepare")
+        self.assertFalse((self.private / "merge-approval-instructions.json").exists())
+        self.assertFalse((self.private / "coordinator-prepared.json").exists())
+        self.assertEqual(self.events_named("owner-wait"), [])
+        self.assertEqual(self.events_named("execute"), [])
 
     def test_replay_requires_passed_zero_network_and_unchanged_journal(self):
         for key, value in (("status", "failed"), ("network_syscalls", 1),

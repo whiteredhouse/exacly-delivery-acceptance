@@ -85,6 +85,12 @@ owner-reviewed `canary-merger-diagnostic` environment and approval of the exact
 frozen run; they do not need to merge into main. See the
 [branch preflight setup](docs/APP-SETUP.md#7-owner-reviewed-app-grant-candidate-preflight).
 
+The [native trial protocol](docs/NATIVE-SUPPLEMENTAL-TRIAL.md) retains the
+consumed allocations and stopped result. Selection instructions distinguish the
+comment-submission cutoff from the bounded verification deadline; closed reason
+codes explain future relay stops without exposing private exception text.
+The timing fix grants no further trial allowance.
+
 The hosted verification path checks its real run and complete bounded workflow
 history. Reruns and prior unsuccessful verification for the same PR block a new
 check write; a unique exact existing result may be discovered read-only. A new

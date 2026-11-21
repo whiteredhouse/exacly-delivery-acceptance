@@ -345,7 +345,12 @@ class SupplementalRelayTests(unittest.TestCase):
             clock=self.timer.now, monotonic=self.timer.mono, sleep=self.timer.sleep,
         )
         self.assertEqual(restored.reads, self.client.reads)
-        self.assertEqual(restored.export_state(), state)
+        restored_state = restored.export_state()
+        stable_before = {k: v for k, v in state["payload"].items() if k not in {"last_at", "last_monotonic"}}
+        stable_after = {k: v for k, v in restored_state["payload"].items() if k not in {"last_at", "last_monotonic"}}
+        self.assertEqual(stable_after, stable_before)
+        self.assertEqual(restored_state["payload"]["last_monotonic"], 20)
+        self.assertEqual(restored_state["payload"]["last_at"], "2026-11-03T14:00:20.000000Z")
         self.assertIn(receipt["accounting_digest"], json.dumps(state))
         restored.recheck_host()
         self.assertGreater(restored.reads, self.client.reads)
@@ -524,9 +529,9 @@ class SupplementalCoordinatorTests(unittest.TestCase):
                                monotonic=outer.timer.mono, sleep=outer.timer.sleep)
                 super().__init__(token, context, **options)
 
-            def wait(self, selected, *, expires_at):
+            def wait(self, selected, *, plan=None, expires_at=None):
                 outer.events.append(("owner-wait", selected["phase"]))
-                result = super().wait(selected, expires_at=expires_at)
+                result = super().wait(selected, plan=plan, expires_at=expires_at)
                 outer.receipts.append(result)
                 return result
 

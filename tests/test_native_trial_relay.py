@@ -361,8 +361,10 @@ class RelayTests(unittest.TestCase):
         self.client.reads = 63
         with self.assertRaisesRegex(relay.RelayStopped, "GET budget"):
             self.wait()
-        self.assertEqual(self.client.reads, 64)
-        self.assertEqual(len(self.backend.calls), 5)
+        # A published window must fund its final reread and the following
+        # phase; reject before spending a GET that cannot yield authority.
+        self.assertEqual(self.client.reads, 63)
+        self.assertEqual(len(self.backend.calls), 4)
 
     def test_expired_or_overdue_read_cannot_return_authority(self):
         for mode in ("expired", "wall", "during-final"):
@@ -444,8 +446,8 @@ class RelayTests(unittest.TestCase):
         self.approve()
         with self.assertRaisesRegex(relay.RelayStopped, "GET budget"):
             self.wait()
-        self.assertEqual(self.client.reads, 64)
-        self.assertEqual(len(self.backend.calls), 5)
+        self.assertEqual(self.client.reads, 63)
+        self.assertEqual(len(self.backend.calls), 4)
         with self.assertRaises(relay.RelayStopped):
             self.client.export_state()
 
