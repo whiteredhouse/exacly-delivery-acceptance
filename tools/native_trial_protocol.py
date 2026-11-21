@@ -17,8 +17,8 @@ from pathlib import Path
 
 
 SPEC_PATH = "config/native-supplemental-trial.json"
-SPEC_DIGEST = "sha256:e91e24afa1af0d12798542f6b7872f1d0adbce1815e0e30c2ade343cd730ac4c"
-ACCOUNTING_DIGEST = "sha256:09670e7d79f6f56e4428e18023a110fe85689a733e624ab8116e28250c42936e"
+SPEC_DIGEST = "sha256:be604a0949c339587bf1b654c8716ef85ec2dbde6158b284cbabe660751647ae"
+ACCOUNTING_DIGEST = "sha256:427f35a3b432d18c307bd3de87f561b2d1f6346107d4024116fdd9988bdd5916"
 PROFILE = {
     "core_revision": "bd60d9d58c44390089a435d075a77f132cb684da",
     "spec_digest": SPEC_DIGEST,
@@ -35,6 +35,14 @@ WORKFLOW = ".github/workflows/app-bootstrap.yml"
 JOB = "native-positive-trial"
 MAX_DOCUMENT = 1024 * 1024
 ALLOCATION_LIMITS = {"operations": 1, "wall_time_ms": 360000, "reads": 192, "rollbacks": 0}
+TIMING_POLICY = {
+    "local_grant_seconds": 1800,
+    "owner_wait_seconds": 1200,
+    "owner_submission_seconds": 900,
+    "maximum_relay_reads": 64,
+    "maximum_polls_per_phase": 25,
+    "poll_interval_seconds": 45,
+}
 NATIVE_TITLE = "canary-bootstrap:native-positive-trial:pr-5"
 HISTORY_FIELDS = {"run_id", "run_attempt", "source", "title", "status", "conclusion", "workflow_id"}
 
@@ -85,6 +93,8 @@ def validate_profile(profile, spec=None):
     require(isinstance(spec, dict) and digest(spec) == SPEC_DIGEST
             and spec.get("kind") == "fixed-native-supplemental-trial"
             and spec.get("core_revision") == profile["core_revision"])
+    require(all(type(spec.get(key)) is int and spec[key] == number
+                for key, number in TIMING_POLICY.items()))
     accounting = spec.get("accounting")
     require(isinstance(accounting, dict) and set(accounting) == {
         "schema_version", "kind", "original_objective", "operation_key", "consumed_allocations",

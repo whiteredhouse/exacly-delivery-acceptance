@@ -93,8 +93,8 @@ class Backend:
             )
             self.history.append(old)
         self.predecessor = next(item for item in self.history if item["id"] == 41526436188)
-        self.consumed = {item["id"]: item for item in self.history
-                         if item["id"] in {41526436188, 41665083190}}
+        consumed_ids = {item["run_id"] for item in protocol["spec"]["accounting"]["consumed_allocations"]}
+        self.consumed = {item["id"]: item for item in self.history if item["id"] in consumed_ids}
         self.history_total = None
         self.comments = []
         self.jobs = {"total_count": 1, "jobs": [{
@@ -143,7 +143,7 @@ class SupplementalProtocolTests(unittest.TestCase):
         self.module = load("native_trial_protocol")
         self.protocol = self.module.load(ROOT)
 
-    def test_original_goal_and_both_full_spent_allocations_are_preserved(self):
+    def test_original_goal_and_all_three_full_spent_allocations_are_preserved(self):
         original = json.loads((ROOT / "config/native-positive-trial.json").read_text())
         spec = self.protocol["spec"]
         accounting = spec["accounting"]
@@ -152,29 +152,30 @@ class SupplementalProtocolTests(unittest.TestCase):
         self.assertEqual(accounting["schema_version"], "0.2.0")
         self.assertEqual(spec["limits"], original["limits"])
         self.assertEqual(accounting["charged_prior_limits"], {
-            "operations": 2, "wall_time_ms": 720000, "reads": 384, "rollbacks": 0,
+            "operations": 3, "wall_time_ms": 1080000, "reads": 576, "rollbacks": 0,
         })
         self.assertEqual(accounting["additional_limits"], original["limits"])
         self.assertEqual(accounting["aggregate_limits"], {
-            "operations": 3, "wall_time_ms": 1080000, "reads": 576, "rollbacks": 0,
+            "operations": 4, "wall_time_ms": 1440000, "reads": 768, "rollbacks": 0,
         })
         consumed = accounting["consumed_allocations"]
-        self.assertEqual([item["run_id"] for item in consumed], [41526436188, 41665083190])
+        self.assertEqual([item["run_id"] for item in consumed], [41526436188, 41665083190, 44895283908])
         self.assertEqual(consumed[0]["journal_id"], "8e89b70f6dfe4afbb7ee4829cbbab208")
+        self.assertEqual(consumed[2]["source"], "6dd46ac55d87f07a2a62328cb182920383b12918")
         self.assertTrue(all(item["charged_limits"] == original["limits"] for item in consumed))
-        self.assertEqual([item["run_id"] for item in accounting["history_baseline"]][-1], 41665083190)
-        self.assertEqual(len(accounting["history_baseline"]), 12)
+        self.assertEqual([item["run_id"] for item in accounting["history_baseline"]][-1], 44895283908)
+        self.assertEqual(len(accounting["history_baseline"]), 13)
 
     def test_allowance_command_explicitly_selects_one_extra_operation_and_actual_run(self):
         command = self.module.allowance_command(self.protocol, CONTEXT)
         self.assertIn("additional_operations=1", command)
-        self.assertIn("aggregate_operations=3", command)
-        self.assertIn("charged_prior_operations=2", command)
-        self.assertIn("charged_prior_wall_time_ms=720000", command)
-        self.assertIn("charged_prior_reads=384", command)
+        self.assertIn("aggregate_operations=4", command)
+        self.assertIn("charged_prior_operations=3", command)
+        self.assertIn("charged_prior_wall_time_ms=1080000", command)
+        self.assertIn("charged_prior_reads=576", command)
         self.assertIn("charged_prior_rollbacks=0", command)
         self.assertIn(CONTEXT["source"], command)
-        self.assertIn("consumed_runs=41526436188,41665083190", command)
+        self.assertIn("consumed_runs=41526436188,41665083190,44895283908", command)
         self.assertIn(self.protocol["profile"]["accounting_digest"], command)
         self.assertNotIn("\n", command)
         for changed in ({"run_id": 902}, {"source": "a" * 40}):
@@ -277,11 +278,12 @@ class SupplementalRelayTests(unittest.TestCase):
             self.module.allowance_command(self.protocol, {**CONTEXT, "run_id": 902}),
             self.module.allowance_command(self.protocol, {**CONTEXT, "source": "a" * 40}),
             original.replace("additional_operations=1", "additional_operations=2"),
-            original.replace("aggregate_operations=3", "aggregate_operations=4"),
-            original.replace("charged_prior_operations=2", "charged_prior_operations=1"),
-            original.replace("charged_prior_reads=384", "charged_prior_reads=192"),
+            original.replace("aggregate_operations=4", "aggregate_operations=5"),
+            original.replace("charged_prior_operations=3", "charged_prior_operations=2"),
+            original.replace("charged_prior_reads=576", "charged_prior_reads=384"),
             original.replace("41526436188", "41526436189"),
             original.replace(",41665083190", ""),
+            original.replace(",44895283908", ""),
         ]
         for command in commands:
             with self.subTest(command_digest=hashlib.sha256(command.encode()).hexdigest()):
@@ -291,7 +293,7 @@ class SupplementalRelayTests(unittest.TestCase):
                 with self.assertRaises(self.relay.RelayStopped):
                     self.client.check_supplemental_allowance()
 
-    def test_missing_or_altered_either_consumed_allocation_is_never_refunded(self):
+    def test_missing_or_altered_any_consumed_allocation_is_never_refunded(self):
         mutations = (
             lambda b, prior: b.history.remove(prior),
             lambda b, prior: prior.update(head_sha="a" * 40),
@@ -300,7 +302,7 @@ class SupplementalRelayTests(unittest.TestCase):
             lambda b, prior: prior.update(status="in_progress", conclusion=None),
             lambda b, prior: prior.update(display_title="renamed-native-run"),
         )
-        for run_id in (41526436188, 41665083190):
+        for run_id in (41526436188, 41665083190, 44895283908):
             for index, mutate in enumerate(mutations):
                 with self.subTest(run_id=run_id, index=index):
                     self.setUp()
@@ -408,7 +410,7 @@ class SupplementalRelayTests(unittest.TestCase):
     def test_equal_boolean_or_float_budget_projection_cannot_claim_selected_digest(self):
         receipt = self.approve()
         variations = (
-            ("charged_prior_limits", "operations", (2.0,)),
+            ("charged_prior_limits", "operations", (3.0,)),
             ("charged_prior_limits", "rollbacks", (False, 0.0)),
             ("additional_limits", "operations", (True, 1.0)),
         )
@@ -673,7 +675,7 @@ class SupplementalCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.control.exists())
         self.assertEqual(self.events, [])
 
-    def test_previous_allowance_command_cannot_authorize_a_new_installation(self):
+    def test_original_allowance_command_cannot_authorize_a_new_installation(self):
         self.backend.approvals[0]["comment"] = (
             "/exacly-native-trial supplement run=901 attempt=1 "
             f"source={CONTEXT['source']} "
@@ -683,6 +685,24 @@ class SupplementalCoordinatorTests(unittest.TestCase):
             "predecessor=41526436188 additional_operations=1 additional_wall_time_ms=360000 "
             "additional_reads=192 aggregate_operations=2 aggregate_wall_time_ms=720000 "
             "aggregate_reads=384 rollbacks=0"
+        )
+        with self.assertRaises(Exception):
+            self.phase("authorize")
+        self.assertFalse(self.private.exists())
+        self.assertFalse(self.control.exists())
+        self.assertEqual(self.events, [])
+
+    def test_previous_cumulative_allowance_command_cannot_authorize_a_new_installation(self):
+        self.backend.approvals[0]["comment"] = (
+            "/exacly-native-trial supplement run=901 attempt=1 "
+            f"source={CONTEXT['source']} "
+            "manifest=sha256:e91e24afa1af0d12798542f6b7872f1d0adbce1815e0e30c2ade343cd730ac4c "
+            "accounting=sha256:09670e7d79f6f56e4428e18023a110fe85689a733e624ab8116e28250c42936e "
+            "original_goal=sha256:40d12b83193c13acc42ea9284d271a901275d619e7074eab95ad872162754f21 "
+            "consumed_runs=41526436188,41665083190 charged_prior_operations=2 "
+            "charged_prior_wall_time_ms=720000 charged_prior_reads=384 charged_prior_rollbacks=0 "
+            "additional_operations=1 additional_wall_time_ms=360000 additional_reads=192 "
+            "aggregate_operations=3 aggregate_wall_time_ms=1080000 aggregate_reads=576 rollbacks=0"
         )
         with self.assertRaises(Exception):
             self.phase("authorize")
@@ -813,6 +833,60 @@ class SupplementalCoordinatorTests(unittest.TestCase):
         self.assertLess(mint, prepare)
         self.assertNotIn("CANARY_APP_TOKEN", steps[authorize].get("env", {}))
         self.assertEqual(job["environment"]["name"], "canary-merger-diagnostic")
+
+    def test_workflow_watchdogs_fit_review_verification_and_existing_native_children(self):
+        import ast
+        import re
+        import yaml
+
+        job = yaml.safe_load((ROOT / ".github/workflows/app-bootstrap.yml").read_text())["jobs"]["native-positive-trial"]
+        spec = self.protocol["spec"]
+        self.assertEqual(job["timeout-minutes"], 40)
+        self.assertEqual(spec["local_grant_seconds"], 1800)
+        self.assertEqual(spec["owner_submission_seconds"], 900)
+        self.assertEqual(spec["owner_wait_seconds"], 1200)
+        self.assertEqual(spec["poll_interval_seconds"], 45)
+        self.assertEqual(spec["maximum_relay_reads"], 64)
+        self.assertEqual(spec["maximum_polls_per_phase"], 25)
+        self.assertEqual(spec["call_limits"], {
+            name: {"wall_time_ms": 120000, "read_calls": 64, "write_calls": writes}
+            for name, writes in (("inspect", 0), ("invoke", 2), ("reconcile", 0))
+        })
+
+        def watchdog(phase):
+            step = next(item for item in job["steps"]
+                        if "native_positive_trial.py " + phase in item.get("run", ""))
+            selected = re.search(r"timeout[^\n]*\s(\d+)s\s*\\?\s*(?:\n|$)", step["run"])
+            self.assertIsNotNone(selected)
+            return int(selected[1])
+
+        # Read private child ceilings without importing or running native code.
+        # This keeps the workflow coverage check tied to their actual bounds.
+        source = ast.parse((ROOT / "tools/native_trial_execution.py").read_text())
+        functions = {node.name: node for node in source.body if isinstance(node, ast.FunctionDef)}
+        cli_timeout = next(node.value for node in ast.walk(functions["_cli"])
+                           if isinstance(node, ast.Assign)
+                           and any(isinstance(target, ast.Name) and target.id == "timeout"
+                                   for target in node.targets))
+        self.assertIsInstance(cli_timeout, ast.IfExp)
+        cli_bounds = [ast.literal_eval(cli_timeout.body), ast.literal_eval(cli_timeout.orelse)]
+
+        def child_bounds(name):
+            return [ast.literal_eval(keyword.value)
+                    for node in ast.walk(functions[name])
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_run"
+                    for keyword in node.keywords if keyword.arg == "timeout"]
+
+        self.assertEqual(sorted(cli_bounds), [150, 270])
+        self.assertEqual(sorted(child_bounds("offline_replay")), [15, 15, 60])
+        self.assertEqual(child_bounds("observe"), [150])
+        # Seven bounded GETs (final poll, exact reread and host checks), plus
+        # the strict completion margin, reserve 71 seconds after submission.
+        review_and_verification = spec["owner_submission_seconds"] + 71
+        self.assertGreater(watchdog("merge"),
+                           review_and_verification + sum(cli_bounds) + sum(child_bounds("offline_replay")))
+        self.assertGreater(watchdog("observe"), review_and_verification + sum(child_bounds("observe")))
+        self.assertEqual((watchdog("merge"), watchdog("observe")), (1800, 1200))
 
 
 if __name__ == "__main__":
