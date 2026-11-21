@@ -1,15 +1,8 @@
 # Supplemental native positive trial
 
-Both recorded allocations are now consumed. Supplemental run `41665083190`
-stopped during merge selection without attempting a native effect. Its retained
-report does not establish the precise private failure cause. The owner's later
-comment arrived after both the published cutoff and the run's end. The protocol
-below records that historical allowance; it does not authorize another run.
-The unchanged history guard rejects run thirteen. A further trial requires
-separately reviewed accounting, source and explicit owner approval.
-
-This protocol defines an additional allowance for the same nonproduction objective,
-operation key and data-only PR #5 in `whiteredhouse/exacly-delivery-acceptance`.
+Both recorded allocations are consumed. This protocol proposes one further
+allowance for an attended trial of the same nonproduction objective, operation
+key and data-only PR #5 in `whiteredhouse/exacly-delivery-acceptance`.
 The source change and controlled tests grant no operational capacity. A new
 installation may be created only after the exact owner approves the additional
 allowance for the actual frozen run in GitHub's environment-review comment.
@@ -22,11 +15,28 @@ missing marker alone would not establish that result. No earlier allowance is
 transferred or refunded, and this is neither a new goal nor recovery of the
 lost private journal and marker key.
 
+The second allocation, run `41665083190`, stopped during merge selection. Its
+retained [job log](https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/41665083190/job/126018155097)
+contains the closed report `native_effect: not_attempted`, `phase: merge` and
+`resend_allowed: false`, followed by official token revocation. The exact pinned
+coordinator's execution helper writes its attempt marker before public native
+invocation; its failure report preserves attempted or known-applied effects.
+This supports no public invocation by that trusted coordinator. Run failure,
+missing artifacts or an open PR alone would not establish that result.
+
+The manifest preserves these safe observations and the original run's existing
+reviewed evidence. Run twelve's artifacts are no longer available as of
+2026-11-21. Their historical IDs and ZIP digests are references from the earlier
+review, not newly verified archive contents. The old private journal was not
+recovered, and the precise wait failure cause remains unknown. The owner's
+later comment arrived after the published cutoff and the run's end; it cannot
+select a future packet or extend the consumed allocation.
+
 ## Fixed scope and accounting
 
 The reviewed [manifest](../config/native-supplemental-trial.json) binds the
-original objective and operation key, predecessor evidence, exact complete
-workflow history and this additional allowance. The core checkout is
+original objective and operation key, both consumed allocations and their
+evidence, the complete workflow history and this additional allowance. The core checkout is
 `bd60d9d58c44390089a435d075a77f132cb684da`. The selected canary is unchanged:
 
 | Identity | Fixed value |
@@ -46,30 +56,36 @@ The protected inventory, branch protection, independent review and canary
 contract remain binding. Current native readiness must still pass immediately
 before an effect; the successful read-only diagnostic is historical evidence.
 
-| Budget | Already charged | Additional allowance | Aggregate limit |
+| Budget | Both prior allocations charged | Proposed additional allowance | Aggregate limit after approval |
 | --- | ---: | ---: | ---: |
-| Operations | 1 | 1 | 2 |
-| Delivery engine wall-time capacity | 360,000 ms | 360,000 ms | 720,000 ms |
-| Delivery engine native reads | 192 | 192 | 384 |
+| Operations | 2 | 1 | 3 |
+| Delivery engine wall-time capacity | 720,000 ms | 360,000 ms | 1,080,000 ms |
+| Delivery engine native reads | 384 | 192 | 576 |
 | Rollbacks | 0 | 0 | 0 |
 
 These are capacity charges, not claims about measured work performed by the
-predecessor. Its entire allowance stays charged even though it stopped before
-native invocation. The new installation receives only the additional allowance.
+prior runs. The ordered `consumed_allocations` records bind runs `41526436188`
+and `41665083190`, each charged its full one-operation, 360,000 ms, 192-read,
+zero-rollback allowance. Their sum must equal `charged_prior_limits`; the
+aggregate must equal that sum plus the proposed addition. No consumed entry may
+be omitted, duplicated or replaced by a smaller charge. The new installation
+receives only the additional allowance, not the aggregate.
 Cross-attempt accounting belongs to this fixed canary coordinator; no native
 cross-journal import or general accounting feature is claimed.
 
-This table covers the two delivery engine allocations. The later observer has
-its own separately selected, one-call, zero-write read decision, capped at
+This table covers the two consumed engine allocations and the proposed third.
+The later observer has its own separately selected, one-call, zero-write read decision, capped at
 120 seconds and 64 reads. Its reads and the relay's separate 64-GET allowance
 are metered independently of this table.
 
-The manifest fixes all eleven prior workflow-history tuples, including source,
+The manifest fixes all twelve prior workflow-history tuples, including source,
 attempt, title, workflow ID and terminal result. The guard also checks their
-run numbers one through eleven. Authorization accepts exactly that baseline
-plus the current run, whose workflow run number must be twelve. Any extra
-dispatch, including a read-only diagnostic, or any
-changed/duplicate history record blocks this plan. Deleting a run cannot restore
+run numbers one through twelve and requires the consumed records to identify
+every prior native-positive PR5 run. Authorization accepts exactly that baseline
+plus the current run, whose workflow run number must be thirteen. A historical
+run ID cannot become a new allocation context. Any extra dispatch, including a
+read-only diagnostic, or any changed/duplicate history record blocks this plan.
+Deleting a run cannot restore
 the allowance. A different job name, source, output directory or new journal
 cannot reset the history.
 
@@ -82,17 +98,24 @@ accepts only the owner's first-attempt manual dispatch from that exact branch.
 The existing environment must retain its required owner reviewer, diagnostic
 branch restriction and disabled administrator bypass.
 
+First agree a time when the owner can review both post-mint proposals within
+their published submission windows. Freeze and review the source before the
+single dispatch: an extra dispatch consumes the expected history position even
+if it never reaches token minting. Do not dispatch while waiting for the owner
+to become available.
+
 After the reviewed source is frozen and the actual pending run exists:
 
 1. Verify the actual run's repository, source SHA, mode, PR5 title and attempt 1.
-   Review the manifest's original goal, operation key, predecessor evidence and
+   Review the manifest's original goal, operation key, both consumed records and
    the full additional and aggregate budget table above.
 2. The assistant will generate and provide the exact allocation command from
    the actual pending run's metadata and reviewed pure protocol module. Review
    that line before using it. It binds the actual run ID, attempt and source
-   SHA, the manifest and accounting digests, original goal and predecessor, and
-   explicitly states the additional and aggregate limits. For independent
-   reproduction, the source API is `native_trial_protocol.load(root)` followed
+   SHA, the manifest and accounting digests, original goal and both consumed run
+   IDs. It explicitly states prior charges and the additional and aggregate
+   limits. For independent reproduction, the source API is
+   `native_trial_protocol.load(root)` followed
    by `native_trial_protocol.allowance_command(protocol, context)`. Its context
    also binds the repository name and numeric ID, workflow ref, diagnostic
    branch ref and unchanged job name. The owner need not write or run Python.
@@ -141,7 +164,7 @@ one-repository App token with the existing six exact permissions. Automatic
 post-job revocation remains enabled. Preparation verifies the retained
 allocation, initializes the actual private installation, and includes the safe
 `supplemental-allocation.json` projection both in the merge proposal and as its
-own published file. Its original predecessor charge remains visible beside the
+own published file. Both consumed charges remain visible beside the
 additional allowance. The safe projection is published only from the actual
 prepared private directory; no pre-mint checkpoint is uploaded.
 

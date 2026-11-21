@@ -74,7 +74,8 @@ class Backend:
         repository = {"id": 1442278205, "full_name": CONTEXT["repository"]}
         owner = {"id": 1679024, "login": "p1c2u", "type": "User"}
         self.run = {
-            "id": 901, "run_number": 12, "run_attempt": 1, "workflow_id": 403984410,
+            "id": 901, "run_number": len(protocol["spec"]["accounting"]["history_baseline"]) + 1,
+            "run_attempt": 1, "workflow_id": 403984410,
             "path": ".github/workflows/app-bootstrap.yml", "event": "workflow_dispatch",
             "head_branch": "codex/preflight-diagnostics", "head_sha": CONTEXT["source"],
             "display_title": "canary-bootstrap:native-positive-trial:pr-5",
@@ -92,6 +93,8 @@ class Backend:
             )
             self.history.append(old)
         self.predecessor = next(item for item in self.history if item["id"] == 41526436188)
+        self.consumed = {item["id"]: item for item in self.history
+                         if item["id"] in {41526436188, 41665083190}}
         self.history_total = None
         self.comments = []
         self.jobs = {"total_count": 1, "jobs": [{
@@ -140,26 +143,38 @@ class SupplementalProtocolTests(unittest.TestCase):
         self.module = load("native_trial_protocol")
         self.protocol = self.module.load(ROOT)
 
-    def test_original_goal_and_full_spent_allocation_are_preserved(self):
+    def test_original_goal_and_both_full_spent_allocations_are_preserved(self):
         original = json.loads((ROOT / "config/native-positive-trial.json").read_text())
         spec = self.protocol["spec"]
         accounting = spec["accounting"]
         self.assertEqual(spec["objective"], original["objective"])
         self.assertEqual(spec["operation_key"], original["operation_key"])
-        self.assertEqual(accounting["charged_prior_limits"], original["limits"])
-        self.assertEqual(accounting["additional_limits"], original["limits"])
-        self.assertEqual(accounting["aggregate_limits"], {
+        self.assertEqual(accounting["schema_version"], "0.2.0")
+        self.assertEqual(spec["limits"], original["limits"])
+        self.assertEqual(accounting["charged_prior_limits"], {
             "operations": 2, "wall_time_ms": 720000, "reads": 384, "rollbacks": 0,
         })
-        self.assertEqual(accounting["predecessor"]["run_id"], 41526436188)
-        self.assertEqual(accounting["predecessor"]["journal_id"], "8e89b70f6dfe4afbb7ee4829cbbab208")
+        self.assertEqual(accounting["additional_limits"], original["limits"])
+        self.assertEqual(accounting["aggregate_limits"], {
+            "operations": 3, "wall_time_ms": 1080000, "reads": 576, "rollbacks": 0,
+        })
+        consumed = accounting["consumed_allocations"]
+        self.assertEqual([item["run_id"] for item in consumed], [41526436188, 41665083190])
+        self.assertEqual(consumed[0]["journal_id"], "8e89b70f6dfe4afbb7ee4829cbbab208")
+        self.assertTrue(all(item["charged_limits"] == original["limits"] for item in consumed))
+        self.assertEqual([item["run_id"] for item in accounting["history_baseline"]][-1], 41665083190)
+        self.assertEqual(len(accounting["history_baseline"]), 12)
 
     def test_allowance_command_explicitly_selects_one_extra_operation_and_actual_run(self):
         command = self.module.allowance_command(self.protocol, CONTEXT)
         self.assertIn("additional_operations=1", command)
-        self.assertIn("aggregate_operations=2", command)
+        self.assertIn("aggregate_operations=3", command)
+        self.assertIn("charged_prior_operations=2", command)
+        self.assertIn("charged_prior_wall_time_ms=720000", command)
+        self.assertIn("charged_prior_reads=384", command)
+        self.assertIn("charged_prior_rollbacks=0", command)
         self.assertIn(CONTEXT["source"], command)
-        self.assertIn("41526436188", command)
+        self.assertIn("consumed_runs=41526436188,41665083190", command)
         self.assertIn(self.protocol["profile"]["accounting_digest"], command)
         self.assertNotIn("\n", command)
         for changed in ({"run_id": 902}, {"source": "a" * 40}):
@@ -262,8 +277,11 @@ class SupplementalRelayTests(unittest.TestCase):
             self.module.allowance_command(self.protocol, {**CONTEXT, "run_id": 902}),
             self.module.allowance_command(self.protocol, {**CONTEXT, "source": "a" * 40}),
             original.replace("additional_operations=1", "additional_operations=2"),
-            original.replace("aggregate_operations=2", "aggregate_operations=3"),
+            original.replace("aggregate_operations=3", "aggregate_operations=4"),
+            original.replace("charged_prior_operations=2", "charged_prior_operations=1"),
+            original.replace("charged_prior_reads=384", "charged_prior_reads=192"),
             original.replace("41526436188", "41526436189"),
+            original.replace(",41665083190", ""),
         ]
         for command in commands:
             with self.subTest(command_digest=hashlib.sha256(command.encode()).hexdigest()):
@@ -273,23 +291,25 @@ class SupplementalRelayTests(unittest.TestCase):
                 with self.assertRaises(self.relay.RelayStopped):
                     self.client.check_supplemental_allowance()
 
-    def test_missing_or_altered_consumed_predecessor_is_never_refunded(self):
+    def test_missing_or_altered_either_consumed_allocation_is_never_refunded(self):
         mutations = (
-            lambda b: b.history.remove(b.predecessor),
-            lambda b: b.predecessor.update(head_sha="a" * 40),
-            lambda b: b.predecessor.update(run_attempt=2),
-            lambda b: b.predecessor.update(conclusion="cancelled"),
-            lambda b: b.predecessor.update(status="in_progress", conclusion=None),
-            lambda b: b.predecessor.update(display_title="renamed-native-run"),
+            lambda b, prior: b.history.remove(prior),
+            lambda b, prior: prior.update(head_sha="a" * 40),
+            lambda b, prior: prior.update(run_attempt=2),
+            lambda b, prior: prior.update(conclusion="cancelled"),
+            lambda b, prior: prior.update(status="in_progress", conclusion=None),
+            lambda b, prior: prior.update(display_title="renamed-native-run"),
         )
-        for index, mutate in enumerate(mutations):
-            with self.subTest(index=index):
-                self.setUp()
-                mutate(self.backend)
-                with self.assertRaises(self.relay.RelayStopped):
-                    self.client.check_host()
+        for run_id in (41526436188, 41665083190):
+            for index, mutate in enumerate(mutations):
+                with self.subTest(run_id=run_id, index=index):
+                    self.setUp()
+                    mutate(self.backend, self.backend.consumed[run_id])
+                    with self.assertRaises(self.relay.RelayStopped):
+                        self.client.check_host()
+                    self.assertFalse(any(path.endswith("/approvals") for path in self.backend.calls))
 
-    def test_any_third_native_attempt_blocks_even_cancelled_concurrent_or_renamed(self):
+    def test_any_extra_native_attempt_blocks_even_cancelled_concurrent_or_renamed(self):
         changes = (
             {"status": "completed", "conclusion": "failure"},
             {"status": "completed", "conclusion": "cancelled"},
@@ -303,13 +323,13 @@ class SupplementalRelayTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.setUp()
                 extra = copy.deepcopy(self.backend.run)
-                extra.update(id=902, run_number=22, **change)
+                extra.update(id=902, run_number=self.backend.run["run_number"] + 1, **change)
                 self.backend.history.append(extra)
                 with self.assertRaises(self.relay.RelayStopped):
                     self.client.check_host()
 
     def test_deleted_prior_dispatch_cannot_hide_its_consumed_run_number(self):
-        self.backend.run["run_number"] = 13
+        self.backend.run["run_number"] += 1
         with self.assertRaises(self.relay.RelayStopped):
             self.client.check_host()
 
@@ -329,7 +349,7 @@ class SupplementalRelayTests(unittest.TestCase):
     def test_late_concurrent_dispatch_is_detected_before_effect_recheck(self):
         self.approve()
         extra = copy.deepcopy(self.backend.run)
-        extra.update(id=902, run_number=22, status="queued")
+        extra.update(id=902, run_number=self.backend.run["run_number"] + 1, status="queued")
         self.backend.history.append(extra)
         reads = self.client.reads
         with self.assertRaises(self.relay.RelayStopped):
@@ -387,11 +407,16 @@ class SupplementalRelayTests(unittest.TestCase):
 
     def test_equal_boolean_or_float_budget_projection_cannot_claim_selected_digest(self):
         receipt = self.approve()
-        for scope in ("charged_prior_limits", "additional_limits"):
-            for value in (True, 1.0):
-                with self.subTest(scope=scope, value_type=type(value).__name__):
+        variations = (
+            ("charged_prior_limits", "operations", (2.0,)),
+            ("charged_prior_limits", "rollbacks", (False, 0.0)),
+            ("additional_limits", "operations", (True, 1.0)),
+        )
+        for scope, field, values in variations:
+            for value in values:
+                with self.subTest(scope=scope, field=field, value_type=type(value).__name__):
                     selected = copy.deepcopy(receipt)
-                    selected["accounting"][scope]["operations"] = value
+                    selected["accounting"][scope][field] = value
                     # Python equality alone cannot distinguish these contents;
                     # the selected canonical accounting digest must still hold.
                     self.assertEqual(selected["accounting"], self.protocol["spec"]["accounting"])
@@ -648,6 +673,23 @@ class SupplementalCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.control.exists())
         self.assertEqual(self.events, [])
 
+    def test_previous_allowance_command_cannot_authorize_a_new_installation(self):
+        self.backend.approvals[0]["comment"] = (
+            "/exacly-native-trial supplement run=901 attempt=1 "
+            f"source={CONTEXT['source']} "
+            "manifest=sha256:57adffb6987860d94bf05f5b657880ab23efba41056ef291d81d291bb7de2c0c "
+            "accounting=sha256:e24eff58d035b15e9fbfb5375c465209c2e4cf4a976ad538fa9a18ccf3f20f3e "
+            "original_goal=sha256:40d12b83193c13acc42ea9284d271a901275d619e7074eab95ad872162754f21 "
+            "predecessor=41526436188 additional_operations=1 additional_wall_time_ms=360000 "
+            "additional_reads=192 aggregate_operations=2 aggregate_wall_time_ms=720000 "
+            "aggregate_reads=384 rollbacks=0"
+        )
+        with self.assertRaises(Exception):
+            self.phase("authorize")
+        self.assertFalse(self.private.exists())
+        self.assertFalse(self.control.exists())
+        self.assertEqual(self.events, [])
+
     def test_prepare_cannot_skip_authorize_or_replay_consumed_allocation(self):
         with self.assertRaises(Exception):
             self.phase("prepare")
@@ -696,7 +738,7 @@ class SupplementalCoordinatorTests(unittest.TestCase):
         def dispatch(path):
             if path.endswith("/issues/comments/71"):
                 extra = copy.deepcopy(self.backend.run)
-                extra.update(id=902, run_number=13, status="queued")
+                extra.update(id=902, run_number=self.backend.run["run_number"] + 1, status="queued")
                 self.backend.history.append(extra)
 
         self.backend.on_request = dispatch

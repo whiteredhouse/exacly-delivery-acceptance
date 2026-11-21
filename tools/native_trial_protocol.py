@@ -1,6 +1,6 @@
 """Pinned supplemental allocation; constructing these documents grants no authority.
 
-The old journal cannot be restored or credited. The coordinator separately
+The old journals cannot be restored or credited. The coordinator separately
 verifies the complete run history and the owner's exact environment-review
 comment before allocating a new private installation under the same objective.
 """
@@ -17,8 +17,8 @@ from pathlib import Path
 
 
 SPEC_PATH = "config/native-supplemental-trial.json"
-SPEC_DIGEST = "sha256:57adffb6987860d94bf05f5b657880ab23efba41056ef291d81d291bb7de2c0c"
-ACCOUNTING_DIGEST = "sha256:e24eff58d035b15e9fbfb5375c465209c2e4cf4a976ad538fa9a18ccf3f20f3e"
+SPEC_DIGEST = "sha256:e91e24afa1af0d12798542f6b7872f1d0adbce1815e0e30c2ade343cd730ac4c"
+ACCOUNTING_DIGEST = "sha256:09670e7d79f6f56e4428e18023a110fe85689a733e624ab8116e28250c42936e"
 PROFILE = {
     "core_revision": "bd60d9d58c44390089a435d075a77f132cb684da",
     "spec_digest": SPEC_DIGEST,
@@ -34,6 +34,9 @@ REF = "refs/heads/codex/preflight-diagnostics"
 WORKFLOW = ".github/workflows/app-bootstrap.yml"
 JOB = "native-positive-trial"
 MAX_DOCUMENT = 1024 * 1024
+ALLOCATION_LIMITS = {"operations": 1, "wall_time_ms": 360000, "reads": 192, "rollbacks": 0}
+NATIVE_TITLE = "canary-bootstrap:native-positive-trial:pr-5"
+HISTORY_FIELDS = {"run_id", "run_attempt", "source", "title", "status", "conclusion", "workflow_id"}
 
 
 def require(value):
@@ -58,7 +61,9 @@ def _unique(items):
     return value
 
 
-def _context(context):
+def _context(context, accounting):
+    historical = {item["run_id"] for item in accounting["history_baseline"]}
+    historical.update(item["run_id"] for item in accounting["consumed_allocations"])
     require(isinstance(context, dict)
             and set(context) == {"repository", "repository_id", "source", "run_id", "run_attempt",
                                  "workflow_ref", "ref", "job"}
@@ -66,7 +71,7 @@ def _context(context):
             and type(context["repository_id"]) is int and context["repository_id"] == REPOSITORY_ID
             and isinstance(context["source"], str) and re.fullmatch(r"[0-9a-f]{40}", context["source"])
             and type(context["run_id"]) is int and 0 < context["run_id"] < 2**63
-            and context["run_id"] != 41526436188
+            and context["run_id"] not in historical
             and type(context["run_attempt"]) is int and context["run_attempt"] == 1
             and context["workflow_ref"] == REPOSITORY + "/" + WORKFLOW + "@" + REF
             and context["ref"] == REF and context["job"] == JOB)
@@ -81,14 +86,50 @@ def validate_profile(profile, spec=None):
             and spec.get("kind") == "fixed-native-supplemental-trial"
             and spec.get("core_revision") == profile["core_revision"])
     accounting = spec.get("accounting")
-    require(isinstance(accounting, dict) and digest(accounting) == ACCOUNTING_DIGEST
+    require(isinstance(accounting, dict) and set(accounting) == {
+        "schema_version", "kind", "original_objective", "operation_key", "consumed_allocations",
+        "charged_prior_limits", "additional_limits", "aggregate_limits", "authorization",
+        "accounting_scope", "history_baseline",
+    } and digest(accounting) == ACCOUNTING_DIGEST
+            and accounting.get("schema_version") == "0.2.0"
+            and accounting["kind"] == "supplemental-native-trial-allocation"
             and accounting["original_objective"] == spec["objective"]
             and accounting["operation_key"] == spec["operation_key"]
-            and accounting["additional_limits"] == spec["limits"])
+            and accounting["additional_limits"] == spec["limits"] == ALLOCATION_LIMITS
+            and all(type(number) is int for number in spec["limits"].values()))
     keys = {"operations", "wall_time_ms", "reads", "rollbacks"}
     for name in ("charged_prior_limits", "additional_limits", "aggregate_limits"):
-        require(set(accounting[name]) == keys
+        require(isinstance(accounting[name], dict) and set(accounting[name]) == keys
                 and all(type(number) is int and number >= 0 for number in accounting[name].values()))
+    history, consumed = accounting["history_baseline"], accounting["consumed_allocations"]
+    require(isinstance(history, list) and history and isinstance(consumed, list) and consumed)
+    for item in history:
+        require(isinstance(item, dict) and set(item) == HISTORY_FIELDS
+                and type(item["run_id"]) is int and 0 < item["run_id"] < 2**63
+                and type(item["run_attempt"]) is int and item["run_attempt"] == 1
+                and isinstance(item["source"], str) and re.fullmatch(r"[0-9a-f]{40}", item["source"])
+                and isinstance(item["title"], str) and item["title"]
+                and item["status"] == "completed"
+                and isinstance(item["conclusion"], str) and item["conclusion"]
+                and type(item["workflow_id"]) is int and 0 < item["workflow_id"] < 2**63)
+    require(len({item["run_id"] for item in history}) == len(history))
+    native_history = [item for item in history if item["title"] == NATIVE_TITLE]
+    require(len(consumed) == len(native_history))
+    consumed_ids = []
+    for allocation, historical in zip(consumed, native_history):
+        require(isinstance(allocation, dict) and HISTORY_FIELDS <= set(allocation)
+                and all(type(allocation[key]) is type(historical[key]) for key in HISTORY_FIELDS)
+                and {key: allocation[key] for key in HISTORY_FIELDS} == historical
+                and isinstance(allocation.get("charged_limits"), dict)
+                and set(allocation["charged_limits"]) == keys
+                and all(type(number) is int and number >= 0
+                        for number in allocation["charged_limits"].values())
+                and allocation["charged_limits"] == ALLOCATION_LIMITS)
+        consumed_ids.append(allocation["run_id"])
+    require(len(set(consumed_ids)) == len(consumed_ids))
+    require(all(accounting["charged_prior_limits"][key]
+                == sum(item["charged_limits"][key] for item in consumed)
+                for key in keys))
     require(all(accounting["aggregate_limits"][key]
                 == accounting["charged_prior_limits"][key] + accounting["additional_limits"][key]
                 for key in keys))
@@ -126,15 +167,19 @@ def validate_protocol(protocol):
 def allowance_command(protocol, context):
     """Exact comment required in the owner's actual environment approval."""
     selected = validate_protocol(protocol)
-    _context(context)
     accounting = selected["spec"]["accounting"]
+    _context(context, accounting)
+    prior = accounting["charged_prior_limits"]
     additional, aggregate = accounting["additional_limits"], accounting["aggregate_limits"]
     fields = [
         ("run", context["run_id"]), ("attempt", context["run_attempt"]),
         ("source", context["source"]), ("manifest", selected["profile"]["spec_digest"]),
         ("accounting", selected["profile"]["accounting_digest"]),
         ("original_goal", accounting["original_objective"]["original_goal"]),
-        ("predecessor", accounting["predecessor"]["run_id"]),
+        ("consumed_runs", ",".join(str(item["run_id"]) for item in accounting["consumed_allocations"])),
+        ("charged_prior_operations", prior["operations"]),
+        ("charged_prior_wall_time_ms", prior["wall_time_ms"]), ("charged_prior_reads", prior["reads"]),
+        ("charged_prior_rollbacks", prior["rollbacks"]),
         ("additional_operations", additional["operations"]),
         ("additional_wall_time_ms", additional["wall_time_ms"]), ("additional_reads", additional["reads"]),
         ("aggregate_operations", aggregate["operations"]),
@@ -147,13 +192,13 @@ def allowance_command(protocol, context):
 def validate_allocation(receipt, *, profile, spec, context):
     """Check a retained projection; the relay separately verifies its provider origin."""
     validate_profile(profile, spec)
-    _context(context)
+    _context(context, spec["accounting"])
     require(isinstance(receipt, dict) and set(receipt) == {
         "schema_version", "kind", "status", "context", "accounting", "accounting_digest",
         "reviewer_id", "environment_id", "command", "command_digest", "observed_at",
     })
     command = allowance_command({"profile": profile, "spec": spec}, context)
-    _context(receipt["context"])
+    _context(receipt["context"], spec["accounting"])
     require(receipt["schema_version"] == "0.1.0"
             and receipt["kind"] == "owner-approved-supplemental-native-allocation"
             and receipt["status"] == "approved" and receipt["context"] == context

@@ -146,44 +146,101 @@
   "maximum_relay_reads": 64,
   "maximum_polls_per_phase": 25,
   "poll_interval_seconds": 20,
-  "retention": "Fresh installation exists only during this continuously alive job, after explicit supplemental allocation approval. The consumed predecessor stays charged in coordinator accounting; no original journal/key is restored and no native cross-journal accounting is claimed. Safe artifacts cannot preserve original filesystem identity after runner loss.",
+  "retention": "Fresh installation exists only during this continuously alive job, after explicit supplemental allocation approval. Both consumed allocations stay fully charged in coordinator accounting; no original journal/key is restored and no native cross-journal accounting is claimed. Safe artifacts cannot preserve original filesystem identity after runner loss.",
   "accounting": {
-    "schema_version": "0.1.0",
+    "schema_version": "0.2.0",
     "kind": "supplemental-native-trial-allocation",
     "original_objective": {
       "id": "sha256:0f90a807b4a2a2fc6b533a4780065d4eee586379b66b1e74ab14f4735bc519d5",
       "original_goal": "sha256:40d12b83193c13acc42ea9284d271a901275d619e7074eab95ad872162754f21"
     },
     "operation_key": "sha256:9ba69a7dd37c16fd2a647473496c04a67ec8eb4c55d1f9a9621770354239aad3",
-    "predecessor": {
-      "run_id": 41526436188,
-      "run_attempt": 1,
-      "source": "4f7418a9e7127812eb4515ef8c3c803e1810584d",
-      "workflow_id": 403984410,
-      "title": "canary-bootstrap:native-positive-trial:pr-5",
-      "status": "completed",
-      "conclusion": "failure",
-      "journal_id": "8e89b70f6dfe4afbb7ee4829cbbab208",
-      "intent_id": "sha256:2ebdca1ea991adfc46562ff4fc261f366fc62cd54a668885cfcac47a9b5f4198",
-      "proposal_artifact": {
-        "id": 13184177941,
-        "digest": "sha256:39807d13e77177f9d251da9b00601997505a71b83d0d26193f6864a20d3abca5"
+    "consumed_allocations": [
+      {
+        "run_id": 41526436188,
+        "run_attempt": 1,
+        "source": "4f7418a9e7127812eb4515ef8c3c803e1810584d",
+        "workflow_id": 403984410,
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "journal_id": "8e89b70f6dfe4afbb7ee4829cbbab208",
+        "intent_id": "sha256:2ebdca1ea991adfc46562ff4fc261f366fc62cd54a668885cfcac47a9b5f4198",
+        "proposal_artifact": {
+          "id": 13184177941,
+          "digest": "sha256:39807d13e77177f9d251da9b00601997505a71b83d0d26193f6864a20d3abca5"
+        },
+        "result_artifact": {
+          "id": 13184223225,
+          "digest": "sha256:35b5a097523edad384a5858503c79dd5b053de1262d0de2aab8cd949cdd3ed21"
+        },
+        "native_status": "prepared",
+        "native_effect_authorized": false,
+        "native_invocation_released": false,
+        "native_completion_receipt_present": false,
+        "safe_result_document_digest": "sha256:f21729aa20ebf37e39f9a4b2bc82b544f661e57aa85bcb5d70456c58b5d784d4",
+        "proof_basis": "Reviewed retained native merge-result from the exact result artifact, actual selected intent and pinned stopped-before-invoke engine path; failure status or missing marker alone is not the proof.",
+        "charged_limits": {
+          "operations": 1,
+          "wall_time_ms": 360000,
+          "reads": 192,
+          "rollbacks": 0
+        }
       },
-      "result_artifact": {
-        "id": 13184223225,
-        "digest": "sha256:35b5a097523edad384a5858503c79dd5b053de1262d0de2aab8cd949cdd3ed21"
-      },
-      "native_status": "prepared",
-      "native_effect_authorized": false,
-      "native_invocation_released": false,
-      "native_completion_receipt_present": false,
-      "safe_result_document_digest": "sha256:f21729aa20ebf37e39f9a4b2bc82b544f661e57aa85bcb5d70456c58b5d784d4",
-      "proof_basis": "Reviewed retained native merge-result from the exact result artifact, actual selected intent and pinned stopped-before-invoke engine path; failure status or missing marker alone is not the proof."
-    },
+      {
+        "run_id": 41665083190,
+        "run_attempt": 1,
+        "source": "34eb2e67f21fa99ddafe1a910ff655123aa83d85",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410,
+        "charged_limits": {
+          "operations": 1,
+          "wall_time_ms": 360000,
+          "reads": 192,
+          "rollbacks": 0
+        },
+        "native_invocation_released": false,
+        "native_completion_receipt_present": false,
+        "evidence": {
+          "kind": "reviewed-github-job-log-and-pinned-before-invoke-path",
+          "job_id": 126018155097,
+          "job_url": "https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/41665083190/job/126018155097",
+          "safe_report": {
+            "error_code": "native_positive_trial_stopped",
+            "native_effect": "not_attempted",
+            "phase": "merge",
+            "resend_allowed": false,
+            "status": "stopped"
+          },
+          "report_log_timestamp": "2026-11-03T15:51:33.6523257Z",
+          "official_token_revocation_observed": true,
+          "source_revision": "34eb2e67f21fa99ddafe1a910ff655123aa83d85",
+          "coordinator_path": "tools/native_positive_trial.py",
+          "execution_path": "tools/native_trial_execution.py",
+          "artifact_revalidation": "unavailable; artifacts endpoint returned zero records on 2026-11-21",
+          "historical_artifact_references_not_revalidated": [
+            {
+              "role": "merge-proposal",
+              "id": 13246262780,
+              "digest": "sha256:8de54638555f8d6d1eb1263c86a2cb5f5ea7d2e2a1609ef54aa453820a4fc12b"
+            },
+            {
+              "role": "trial-results",
+              "id": 13246179308,
+              "digest": "sha256:29a6a21a41d1926f340661f9a3e11eeac7b379e4bf3e72d49fd65ad2b3c478bf"
+            }
+          ],
+          "precise_wait_failure_cause": "not retained",
+          "proof_basis": "The actual job's closed stopped report says native_effect not_attempted. At its exact reviewed source, the coordinator's execution helper writes an execution-attempt marker before public native invocation and preserves an attempted or known-applied effect in failures. This relies on the pinned trusted CI source and its retained safe log; old artifact contents and the lost private journal were not revalidated. Run failure, artifact absence or an unmerged PR alone is not the proof."
+        }
+      }
+    ],
     "charged_prior_limits": {
-      "operations": 1,
-      "wall_time_ms": 360000,
-      "reads": 192,
+      "operations": 2,
+      "wall_time_ms": 720000,
+      "reads": 384,
       "rollbacks": 0
     },
     "additional_limits": {
@@ -193,9 +250,9 @@
       "rollbacks": 0
     },
     "aggregate_limits": {
-      "operations": 2,
-      "wall_time_ms": 720000,
-      "reads": 384,
+      "operations": 3,
+      "wall_time_ms": 1080000,
+      "reads": 576,
       "rollbacks": 0
     },
     "authorization": "exact-owner-environment-approval-comment-before-initialization",
@@ -298,6 +355,15 @@
         "title": "canary-bootstrap:native-readiness-diagnostic:pr-5",
         "status": "completed",
         "conclusion": "success",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41665083190,
+        "run_attempt": 1,
+        "source": "34eb2e67f21fa99ddafe1a910ff655123aa83d85",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
         "workflow_id": 403984410
       }
     ]

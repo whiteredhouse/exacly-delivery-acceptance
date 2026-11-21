@@ -596,7 +596,7 @@ class Relay:
     def _supplemental_history(self, history, current):
         accounting = self.protocol["spec"]["accounting"]
         baseline = accounting["history_baseline"]
-        _require(isinstance(baseline, list) and len(baseline) == 11
+        _require(isinstance(baseline, list) and baseline
                  and len(history) == len(baseline) + 1
                  and current["run_number"] == len(baseline) + 1,
                  "supplemental dispatch allowance differs", code=RelayStopCode.INVENTORY_INVALID)
@@ -619,13 +619,13 @@ class Relay:
                      "reviewed historical attempt differs", code=RelayStopCode.INVENTORY_INVALID)
             found.add(item["id"])
         _require(found == set(indexed), "reviewed historical attempt is missing", code=RelayStopCode.INVENTORY_INVALID)
-        predecessor = accounting["predecessor"]
-        prior = next(item for item in history if item["id"] == predecessor["run_id"])
-        _require(prior.get("event") == "workflow_dispatch"
-                 and prior.get("head_branch") == REF.removeprefix("refs/heads/")
-                 and self._repo(prior.get("head_repository"))
-                 and self._owner(prior.get("actor")) and self._owner(prior.get("triggering_actor")),
-                 "consumed native predecessor differs", code=RelayStopCode.INVENTORY_INVALID)
+        for allocation in accounting["consumed_allocations"]:
+            prior = next(item for item in history if item["id"] == allocation["run_id"])
+            _require(prior.get("event") == "workflow_dispatch"
+                     and prior.get("head_branch") == REF.removeprefix("refs/heads/")
+                     and self._repo(prior.get("head_repository"))
+                     and self._owner(prior.get("actor")) and self._owner(prior.get("triggering_actor")),
+                     "consumed native allocation differs", code=RelayStopCode.INVENTORY_INVALID)
 
     def _verify_host(self, *, recheck):
         try:
@@ -639,7 +639,8 @@ class Relay:
                      and workflow.get("path") == WORKFLOW and workflow.get("state") == "active"
                      and not headers.get("link"), "workflow identity is unavailable", code=RelayStopCode.INVENTORY_INVALID)
             if self.protocol is not None:
-                _require(workflow["id"] == self.protocol["spec"]["accounting"]["predecessor"]["workflow_id"],
+                _require(all(workflow["id"] == item["workflow_id"]
+                             for item in self.protocol["spec"]["accounting"]["consumed_allocations"]),
                          "supplemental workflow differs", code=RelayStopCode.INVENTORY_INVALID)
             run, headers = self._get(PREFIX + "/actions/runs/" + str(self.context["run_id"]))
             _require(not headers.get("link"), "current hosted run differs", code=RelayStopCode.INVENTORY_INVALID)
