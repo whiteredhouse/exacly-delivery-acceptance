@@ -333,21 +333,53 @@ assert Path(paths['journal']).read_bytes() == before_preview and list(opener.cal
 # Purely controlled authorization: no external approval or live effect is claimed.
 pin = delivery.ApprovalPin(approval['issuer'], approval['approval_id'], delivery.digest(approval))
 os.environ['EXACLY_DELIVERY_MERGE_TOKEN'] = token
+execution_loader = importlib.util.spec_from_file_location('native_trial_execution', helper_path.with_name('native_trial_execution.py'))
+execution = importlib.util.module_from_spec(execution_loader)
+execution_loader.loader.exec_module(execution)
+execution._integrity(prepared, **profile_args)
 if supplemental:
- execution_loader = importlib.util.spec_from_file_location('native_trial_execution', helper_path.with_name('native_trial_execution.py'))
- execution = importlib.util.module_from_spec(execution_loader)
- execution_loader.loader.exec_module(execution)
- execution._integrity(prepared, **profile_args)
  arguments = execution._arguments(prepared, selection)
- def public_cli():
+ def public_cli(expected=0):
   output = io.StringIO()
   with contextlib.redirect_stdout(output):
    try:
     code = exacly_main(arguments)
    except SystemExit as error:
     code = error.code
-  assert code == 0
+  assert code == expected
   return json.loads(output.getvalue())
+ if os.environ.get('EXACLY_CONTROLLED_DIAGNOSTIC_SCENARIO') == 'engine-boundary-reconcile':
+  from urllib.error import URLError
+  def lose_acknowledgement(provider):
+   raise URLError('private controlled acknowledgement failure ' + token)
+  opener.after_update = lose_acknowledgement
+  with patch.object(delivery_io, 'merge_adapter', return_value=adapter):
+   uncertain = public_cli(expected=1)
+  assert uncertain['status'] == 'uncertain'
+  with patch.object(github_merge.GitHubMergeAdapter, 'reconcile', side_effect=RuntimeError(token)):
+   unresolved = engine.reconcile(request['operation_key'], approval=approval, pin=pin)
+  assert unresolved['status'] == 'uncertain'
+  operation = delivery_store.show(Path(paths['journal']), prepared['journal_id'], spec['operation_key'])['operation']
+  assert [call['method'] for call in operation['calls']] == ['inspect', 'invoke', 'reconcile']
+  assert operation['calls'][-1]['result']['provenance']['kind'] == 'delivery-engine-boundary-v1'
+  saved, provider_calls = Path(paths['journal']).read_bytes(), len(opener.calls)
+  summary = execution._collect_native_diagnostics(prepared, **profile_args)
+  assert summary['status'] == 'partial' and summary['total_calls'] == 3
+  by_method = {item['method']: item for item in summary['selected_calls']}
+  assert by_method['invoke']['validation_status'] == 'validated'
+  assert by_method['invoke']['outcome'] == 'uncertain'
+  assert by_method['invoke']['projection']['write_started'] is True
+  assert by_method['reconcile']['validation_status'] == 'unavailable'
+  assert by_method['reconcile']['projection'] is None
+  assert by_method['reconcile']['outcome'] is by_method['reconcile']['ready'] is None
+  assert by_method['reconcile']['receipt_id'] == operation['calls'][-1]['receipt']['id']
+  assert token not in json.dumps(summary) and str(private) not in json.dumps(summary)
+  assert Path(paths['journal']).read_bytes() == saved and len(opener.calls) == provider_calls
+  assert len(opener.mutations) == 1 and socket_attempts == []
+  print(json.dumps({'partial_diagnostics': True, 'invoke_retained': True,
+                    'reconcile_native_validation': 'unavailable', 'journal_unchanged': True,
+                    'controlled_atomic_mutations': 1, 'socket_attempts': 0}))
+  raise SystemExit(0)
  with patch.object(delivery_io, 'merge_adapter', return_value=adapter):
   applied = public_cli()
  assert applied['status'] == 'applied' and applied['live_checked'] is True and applied['historical'] is False
@@ -388,6 +420,22 @@ else:
 assert result['provenance']['facts']['preflight']['review']['mergeStateStatus'] == 'UNSTABLE'
 expected_reads = 58 if supplemental else 40
 assert len(opener.calls) - len(opener.writes) == expected_reads and len(opener.writes) == 2
+before_diagnostics, before_diagnostic_reads = Path(paths['journal']).read_bytes(), len(opener.calls)
+native_diagnostics = execution._collect_native_diagnostics(prepared, **profile_args)
+if supplemental:
+ assert native_diagnostics['status'] == 'collected' and native_diagnostics['total_calls'] == 2
+ assert [item['method'] for item in native_diagnostics['selected_calls']] == ['inspect', 'invoke']
+ for item in native_diagnostics['selected_calls']:
+  assert item['validation_status'] == 'validated'
+  assert item['projection']['diagnostic_available'] is True
+  assert item['provenance_digest'] == item['projection']['provenance_digest']
+ assert native_diagnostics['selected_calls'][0]['projection']['write_started'] is False
+ assert native_diagnostics['selected_calls'][1]['projection']['write_started'] is True
+else:
+ assert native_diagnostics['status'] == 'legacy_unavailable'
+ assert native_diagnostics['total_calls'] is None and native_diagnostics['selected_calls'] == []
+assert Path(paths['journal']).read_bytes() == before_diagnostics and len(opener.calls) == before_diagnostic_reads
+assert token not in json.dumps(native_diagnostics) and str(private) not in json.dumps(native_diagnostics)
 before_observer = Path(paths['journal']).read_bytes()
 for wrong in ({**applied, 'status': 'uncertain'},
               {**applied, 'intent': {**intent, 'id': delivery.digest('another intent')}},
@@ -472,8 +520,11 @@ if supplemental:
   assert Path(paths['journal']).read_bytes() == before_observer
  finally:
   allocation_path.write_bytes(original_allocation)
-print(json.dumps({'prepared': True, 'controlled_native_reads': expected_reads, 'controlled_native_writes': 2,
-                  'observer_bound': True, 'same_job_restore': True, 'socket_attempts': 0}))
+output = {'prepared': True, 'controlled_native_reads': expected_reads, 'controlled_native_writes': 2,
+          'observer_bound': True, 'same_job_restore': True, 'socket_attempts': 0}
+if supplemental:
+ output['native_diagnostics_validated'] = True
+print(json.dumps(output))
 '''
 
 

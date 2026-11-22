@@ -14,7 +14,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -380,8 +382,15 @@ class CoordinatorTests(unittest.TestCase):
     def test_nonapplied_outcome_never_observes_or_resends(self):
         self.run_phase("prepare")
         self.execution.merge_report["status"] = "uncertain"
-        with self.assertRaisesRegex(coordinator.Stopped, "not_applied"):
+        with self.assertRaises(coordinator.CoordinatorStopped) as stopped:
             self.run_phase("merge")
+        self.assertIs(type(stopped.exception), coordinator.CoordinatorStopped)
+        self.assertIs(stopped.exception.code, coordinator.CoordinatorStopCode.NATIVE_MERGE_NOT_APPLIED)
+        report = coordinator.failure_report("merge", self.private, error=stopped.exception)
+        self.assertEqual(report["diagnostic"], {"component": "coordinator", "code": "native_merge_not_applied"})
+        self.assertEqual(report["native_effect"], "inspect_original_journal")
+        self.assertFalse(report["resend_allowed"])
+        self.assertEqual(self.read("merge-result.json"), self.execution.merge_report)
         with self.assertRaises(FileExistsError):
             self.run_phase("merge")
         with self.assertRaises(FileNotFoundError):
@@ -574,6 +583,103 @@ class CoordinatorTests(unittest.TestCase):
             self.run_phase("merge")
         self.assertEqual(len(self.events_named("execute")), 1)
         self.assertEqual(self.events_named("offline-replay"), [])
+
+    def test_diagnostic_artifact_cannot_override_preserved_native_result(self):
+        for status, effect in (("applied", "applied"), ("uncertain", "inspect_original_journal")):
+            with self.subTest(status=status):
+                private = self.temp / ("retained-" + status)
+                private.mkdir(mode=0o700)
+                coordinator.create_private(private / "execution-attempt.json", {"native_attempt": True}, ())
+                actual = {"status": status, "receipt": {"id": "retained-native-receipt"}}
+                coordinator.create_private(private / "execution-report.json", actual, ())
+                # Diagnostic contents are never authority for a native outcome.
+                coordinator.create_private(private / "native-call-diagnostics.json", {
+                    "status": "applied", "native_effect": "applied", "stdout": SECRET_ERROR,
+                }, ())
+                original = (private / "execution-report.json").read_bytes()
+                report = coordinator.failure_report("merge", private, error=RuntimeError(SECRET_ERROR))
+                self.assertEqual(report["native_effect"], effect)
+                self.assertFalse(report["resend_allowed"])
+                self.assertEqual((private / "execution-report.json").read_bytes(), original)
+                self.assertNotIn(SECRET_ERROR, json.dumps(report))
+
+    def test_unknown_stop_report_never_reads_exception_or_provider_details(self):
+        accesses = []
+
+        class Sensitive(RuntimeError):
+            def __str__(self):
+                accesses.append("str")
+                raise AssertionError("exception text inspected")
+
+            def __getattribute__(self, name):
+                if name in {"args", "code", "response", "body", "headers", "stdout", "stderr",
+                            "journal", "key", "__cause__", "__context__"}:
+                    accesses.append(name)
+                    raise AssertionError("private exception detail inspected")
+                return super().__getattribute__(name)
+
+        for relays in (None, self.relays):
+            report = coordinator.failure_report("merge", None, error=Sensitive(SECRET_ERROR), relays=relays)
+            self.assertEqual(report["diagnostic"], {"component": "unknown", "code": "unclassified_failure"})
+            self.assertFalse(report["resend_allowed"])
+            self.assertEqual(accesses, [])
+
+    def test_only_exact_owned_coordinator_enum_can_supply_a_public_stop_code(self):
+        code = coordinator.CoordinatorStopCode.NATIVE_MERGE_NOT_APPLIED
+        exact = coordinator.CoordinatorStopped(code)
+        exact.args = (SECRET_ERROR,)
+        exact.stdout = APP_TOKEN
+        exact.response = {"body": RELAY_TOKEN}
+        exact.__cause__ = RuntimeError(SECRET_ERROR)
+        report = coordinator.failure_report("merge", None, error=exact)
+        self.assertEqual(report["diagnostic"], {"component": "coordinator", "code": "native_merge_not_applied"})
+        for secret in (SECRET_ERROR, APP_TOKEN, RELAY_TOKEN):
+            self.assertNotIn(secret, json.dumps(report))
+
+        class Derived(coordinator.CoordinatorStopped):
+            pass
+
+        foreign = RuntimeError(SECRET_ERROR)
+        foreign.code = code
+        forged = coordinator.CoordinatorStopped(code)
+        forged.code = code.value
+        errors = (
+            coordinator.Stopped(code.value), coordinator.Stopped(SECRET_ERROR),
+            Derived(code), forged, foreign,
+        )
+        for error in errors:
+            with self.subTest(error_type=type(error).__name__):
+                report = coordinator.failure_report("merge", None, error=error, relays=self.relays)
+                self.assertEqual(report["diagnostic"], {"component": "unknown", "code": "unclassified_failure"})
+                self.assertFalse(report["resend_allowed"])
+
+    def test_create_only_public_stop_report_failure_keeps_known_applied_output(self):
+        self.run_phase("prepare")
+        actual = {"status": "applied", "receipt": {"id": "retained-native-receipt"}}
+        coordinator.create_private(self.private / "execution-report.json", actual, ())
+        coordinator.create_private(self.private / "trial-report.json", {"prior_report": True}, ())
+        previous = (self.private / "trial-report.json").read_bytes()
+        modules = {
+            "native_trial_protocol": SimpleNamespace(load=lambda root: None),
+            "native_trial_packets": self.packets,
+            "native_trial_relay": self.relays,
+            "native_trial_execution": self.execution,
+        }
+        argv = ["native_positive_trial.py", "merge", "--private", str(self.private),
+                "--core-source", str(self.core)]
+        self.output = io.StringIO()
+        with patch.object(sys, "argv", argv), patch.object(coordinator, "context", return_value=CONTEXT), \
+             patch.object(coordinator, "load_helper", side_effect=modules.__getitem__), \
+             patch.object(coordinator, "run", side_effect=RuntimeError(SECRET_ERROR + APP_TOKEN + RELAY_TOKEN)), \
+             redirect_stdout(self.output):
+            self.assertEqual(coordinator.main(), 1)
+        report = json.loads(self.output.getvalue())
+        self.assertEqual(report["native_effect"], "applied")
+        self.assertFalse(report["resend_allowed"])
+        self.assertEqual(self.read("execution-report.json"), actual)
+        self.assertEqual((self.private / "trial-report.json").read_bytes(), previous)
+        for secret in (SECRET_ERROR, APP_TOKEN, RELAY_TOKEN):
+            self.assertNotIn(secret, self.output.getvalue())
 
     def test_credential_roles_and_installation_cannot_be_substituted(self):
         with self.assertRaisesRegex(coordinator.Stopped, "credential_roles_collide"):

@@ -18,14 +18,13 @@ privileged pull-request triggers. The separate manual App workflow
 below can create genuine verification metadata or collect advisory credential
 evidence under its narrowly scoped App.
 
-The [original native trial](docs/NATIVE-POSITIVE-TRIAL.md) consumed its full
-allowance. The proposed [supplemental trial](docs/NATIVE-SUPPLEMENTAL-TRIAL.md)
-keeps the same objective, operation key and existing data-only PR #5. Before any
-App token is minted or native installation created, the owner must explicitly
-approve one additional finite allowance in the actual environment-review
-comment. The exact post-mint operation and later observer packets still require
-their separate manual PR comments. The private journal and key remain on one
-continuously alive job's filesystem; runner-loss recovery remains unverified.
+All four allocations for the [native trial](docs/NATIVE-SUPPLEMENTAL-TRIAL.md)
+are consumed. The latest run, `44911130619`, retained an uncertain native result;
+its original private journal and key were lost with the completed runner. The
+uncertainty remains unresolved and grants no resend. The unchanged history
+guard prevents another dispatch or rerun from obtaining this allowance.
+Diagnostic retention changes grant no additional capacity. Runner-loss recovery
+remains unverified.
 
 The complete CI suite also installs the pinned native runtime and `strace` for
 real storage, process-profile and offline-tracing checks. Its native integration
@@ -85,15 +84,18 @@ owner-reviewed `canary-merger-diagnostic` environment and approval of the exact
 frozen run; they do not need to merge into main. See the
 [branch preflight setup](docs/APP-SETUP.md#7-owner-reviewed-app-grant-candidate-preflight).
 
-The [native trial protocol](docs/NATIVE-SUPPLEMENTAL-TRIAL.md) preserves all three
-consumed allocations and proposes one separately approved attended allowance.
+The historical [native trial protocol](docs/NATIVE-SUPPLEMENTAL-TRIAL.md) preserves
+the three earlier allocations and the now-consumed fourth attended allowance.
 Selection instructions distinguish the comment-submission cutoff from the
 bounded verification deadline. Supplemental review allows up to fifteen minutes
 with forty-five-second polling, capped by the original thirty-minute lifetime,
 credential expiry and shared read budget. Closed reason codes explain relay
 stops without exposing private exception text.
 Publishing the protocol grants no capacity; the exact actual-run owner approval
-is required before a new installation or token mint.
+was required before that installation or token mint. Its allocation cannot be
+used again. New diagnostic retention preserves bounded invocation and
+reconciliation summaries before private cleanup, without exposing raw native
+output or changing the existing uncertainty and no-resend rules.
 
 The hosted verification path checks its real run and complete bounded workflow
 history. Reruns and prior unsuccessful verification for the same PR block a new

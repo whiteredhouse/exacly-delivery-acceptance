@@ -1,15 +1,18 @@
 """Offline wrapper contracts; fake children never contact GitHub or mint tokens."""
 
 import copy
+from contextlib import contextmanager
 import datetime as dt
 import hashlib
 import importlib.util
+import json
 import os
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +33,7 @@ def put(path, value):
     path.chmod(0o600)
 
 
-class NativeExecutionTests(unittest.TestCase):
+class NativeExecutionFixture:
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="native-execution-tests-")
         self.root = Path(self.tmp.name) / "private"
@@ -84,6 +87,7 @@ class NativeExecutionTests(unittest.TestCase):
             "approval_id": "owner-merge",
             "not_before": timestamp(now - dt.timedelta(minutes=1)),
             "expires_at": timestamp(now + dt.timedelta(minutes=30)),
+            "adapter": {"configuration_digest": "sha256:" + "d" * 64},
         }
         config = {
             "actor": {
@@ -98,7 +102,8 @@ class NativeExecutionTests(unittest.TestCase):
                 }
             },
         }
-        self.spec = {"fixed": "offline-fixture"}
+        self.spec = {"fixed": "offline-fixture", "objective": {"id": "fixture-objective"},
+                     "limits": {"reads": 192}}
         values = {
             "config": config,
             "policy": {"fixed": "policy"},
@@ -129,6 +134,7 @@ class NativeExecutionTests(unittest.TestCase):
             "policy": values["policy"],
             "request": values["request"],
             "payload": values["payload"],
+            "native_limits": values["native_limits"],
             "operation_approval": approval,
             "identity_decision": values["identity"],
             "mint_attestation": values["mint"],
@@ -391,6 +397,8 @@ class NativeExecutionTests(unittest.TestCase):
 
         return child
 
+
+class NativeExecutionTests(NativeExecutionFixture, unittest.TestCase):
     def test_exact_selected_invoke_uses_actual_public_cli_once(self):
         result = self.run_fake()
         self.assertEqual(result["status"], "applied")
@@ -825,6 +833,292 @@ class NativeExecutionTests(unittest.TestCase):
                 self.receipt(observer["selection"], 51),
                 token=SECRET,
             )
+
+
+class NativeDiagnosticRetentionTests(NativeExecutionFixture, unittest.TestCase):
+    def call(self, method, number, *, retained=True, boundary=False):
+        result = None
+        if retained:
+            provenance = {"method": method, "private_fact": SECRET}
+            if boundary:
+                provenance = {"kind": "delivery-engine-boundary-v1", "reason_code": "native-outcome-unresolved"}
+            result = {"reason": SECRET, "provenance": provenance}
+            result.update({"ready": True} if method == "inspect" else {"outcome": "uncertain"})
+        receipt = None if result is None or method == "inspect" else {
+            "id": execution.digest({"fixture_receipt": number}),
+            "provenance_digest": execution.digest(result["provenance"]),
+        }
+        return {"id": execution.digest({"fixture_call": number}), "method": method,
+                "result": result, "receipt": receipt}
+
+    def snapshot(self, calls):
+        proposal = self.prepared["proposal"]
+        return {
+            "metadata": {"objective": self.spec["objective"], "limits": self.spec["limits"],
+                         "native_limits": proposal["native_limits"]},
+            "operations": {proposal["request"]["operation_key"]: {
+                "intent": {"request": proposal["request"]}, "payload": proposal["payload"],
+                "approval": proposal["operation_approval"], "calls": calls,
+            }},
+        }
+
+    def modules(self, snapshot, *, legacy=False, change_projection=None):
+        events = []
+        proposal = self.prepared["proposal"]
+
+        def validate_payload(request, payload, configuration, policy):
+            self.assertEqual((request, payload, configuration, policy),
+                             tuple(proposal[name] for name in ("request", "payload", "configuration", "policy")))
+            events.append("payload")
+
+        def validate_result(method, request, payload, result, *, configuration, policy):
+            validate_payload(request, payload, configuration, policy)
+            events.append("validate:" + method)
+            if result["provenance"].get("kind") == "delivery-engine-boundary-v1":
+                raise ValueError(SECRET)
+            self.assertEqual(result["provenance"]["method"], method)
+            return copy.deepcopy(result)
+
+        def project(method, result):
+            self.assertEqual(events[-1], "validate:" + method)
+            events.append("project:" + method)
+            value = {
+                "schema_version": "0.1.0", "profile": "github-atomic-merge-diagnostics-v1",
+                "method": method, "provenance_digest": execution.digest(result["provenance"]),
+                "diagnostic_available": False, "write_started": method == "invoke",
+                "marker_object": None, "preparation_object": None, "diagnostic": None,
+            }
+            if change_projection is not None:
+                change_projection(value)
+            return value
+
+        native = SimpleNamespace(validate_payload=validate_payload, validate_result=validate_result,
+                                 configuration_digest=lambda *args: "sha256:" + "d" * 64)
+        if not legacy:
+            native.project_result_diagnostics = project
+
+        @contextmanager
+        def opened(path, journal_id, *, write, lock_timeout):
+            self.assertEqual(path, Path(self.paths["journal"]))
+            self.assertEqual(journal_id, self.prepared["journal_id"])
+            self.assertIs(write, False)
+            self.assertEqual(lock_timeout, 0.25)
+            events.append("read-only-open")
+            yield SimpleNamespace(read=lambda: copy.deepcopy(snapshot))
+
+        return (native, SimpleNamespace(opened=opened)), events
+
+    def diagnostic_artifact(self):
+        path = self.root / "native-call-diagnostics.json"
+        value = execution._json(path)
+        self.assertEqual(set(value), {"schema_version", "kind", "authority_granted", "resend_allowed", "wrapper", "journal"})
+        self.assertEqual(value["kind"], "native-call-diagnostics")
+        self.assertIs(value["authority_granted"], False)
+        self.assertIs(value["resend_allowed"], False)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        serialized = json.dumps(value)
+        for private in (SECRET, str(self.root), str(self.core), "actual-fixture-journal-bytes",
+                        "actual-fixture-key-bytes", "private-provider-response"):
+            self.assertNotIn(private, serialized)
+        return value
+
+    def test_applied_result_retains_separate_diagnostics_without_changing_native_result(self):
+        put(self.root / "invoke.stdout", b"private-provider-response" + SECRET.encode())
+        put(self.root / "invoke.stderr", SECRET.encode())
+        with patch.object(execution, "_diagnostic_native", return_value=(SimpleNamespace(), None)):
+            result = self.run_fake()
+        self.assertEqual(result, execution._json(self.root / "execution-report.json"))
+        value = self.diagnostic_artifact()
+        self.assertEqual(value["wrapper"]["invoke"], {"status": "returned", "report_status": "applied", "code": None})
+        self.assertEqual(value["wrapper"]["reconcile"], {"status": "not_started", "report_status": None, "code": None})
+        self.assertEqual(value["journal"], {"status": "legacy_unavailable", "code": "native_diagnostics_legacy_runtime",
+                                            "total_calls": None, "selected_calls": []})
+        self.assertEqual(len(self.calls), 1)
+
+    def test_unresolved_invoke_is_retained_without_inferring_that_no_write_started(self):
+        with patch.object(execution, "_run", side_effect=RuntimeError(SECRET)) as run:
+            with self.assertRaises(execution.ExecutionStopped):
+                execution.execute(self.prepared, self.receipt(), token=SECRET)
+            value = self.diagnostic_artifact()
+            self.assertEqual(value["wrapper"]["invoke"], {"status": "unresolved", "report_status": None,
+                                                         "code": "native_child_unresolved"})
+            self.assertIsNone(value["journal"]["total_calls"])
+            self.assertEqual(value["journal"]["selected_calls"], [])
+            with self.assertRaises(execution.ExecutionStopped):
+                execution.execute(self.prepared, self.receipt(), token=SECRET)
+            self.assertEqual(run.call_count, 1)
+
+    def test_failed_reconciliation_retains_the_original_uncertainty_and_both_wrapper_stages(self):
+        values = iter([(1, encoded(self.report("uncertain")), b""),
+                       execution.ExecutionStopped(SECRET)])
+
+        def child(*args, **kwargs):
+            value = next(values)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        with patch.object(execution, "_run", side_effect=child) as run:
+            result = execution.execute(self.prepared, self.receipt(), token=SECRET)
+        self.assertEqual(result["status"], "uncertain")
+        self.assertEqual(execution._json(self.root / "execution-report.json"), result)
+        value = self.diagnostic_artifact()
+        self.assertEqual(value["wrapper"]["invoke"], {"status": "returned", "report_status": "uncertain", "code": None})
+        self.assertEqual(value["wrapper"]["reconcile"], {"status": "unresolved", "report_status": None,
+                                                       "code": "native_child_unresolved"})
+        self.assertEqual(run.call_count, 2)
+
+    def test_collector_validates_latest_per_method_on_original_read_only_snapshot(self):
+        calls = [self.call("inspect", 1), self.call("inspect", 2),
+                 self.call("invoke", 3), self.call("reconcile", 4)]
+        modules, events = self.modules(self.snapshot(calls))
+        before = Path(self.paths["journal"]).read_bytes()
+        with patch.object(execution, "_diagnostic_native", return_value=modules), patch.object(execution, "_run") as run:
+            value = execution._collect_native_diagnostics(self.prepared)
+        self.assertEqual(value["status"], "collected")
+        self.assertEqual(value["total_calls"], 4)
+        self.assertEqual([item["call_id"] for item in value["selected_calls"]], [call["id"] for call in calls[1:]])
+        self.assertEqual([item["validation_status"] for item in value["selected_calls"]], ["validated"] * 3)
+        self.assertEqual([event for event in events if event.startswith("project:")],
+                         ["project:inspect", "project:invoke", "project:reconcile"])
+        self.assertEqual(Path(self.paths["journal"]).read_bytes(), before)
+        self.assertNotIn(SECRET, json.dumps(value))
+        run.assert_not_called()
+
+    def test_missing_result_stays_unknown_instead_of_claiming_readiness_or_outcome(self):
+        modules, events = self.modules(self.snapshot([self.call("invoke", 1, retained=False)]))
+        with patch.object(execution, "_diagnostic_native", return_value=modules):
+            value = execution._collect_native_diagnostics(self.prepared)
+        selected = value["selected_calls"][0]
+        self.assertIs(selected["result_retained"], False)
+        self.assertEqual(selected["validation_status"], "not_retained")
+        for field in ("ready", "outcome", "receipt_id", "provenance_digest", "projection"):
+            self.assertIsNone(selected[field])
+        self.assertFalse(any(event.startswith("project:") for event in events))
+
+    def test_engine_boundary_reconcile_does_not_erase_the_valid_invocation_summary(self):
+        calls = [self.call("invoke", 1), self.call("reconcile", 2, boundary=True)]
+        modules, _ = self.modules(self.snapshot(calls))
+        with patch.object(execution, "_diagnostic_native", return_value=modules):
+            value = execution._collect_native_diagnostics(self.prepared)
+        self.assertEqual(value["status"], "partial")
+        invoke, reconcile = value["selected_calls"]
+        self.assertEqual(invoke["validation_status"], "validated")
+        self.assertEqual(invoke["outcome"], "uncertain")
+        self.assertIs(invoke["projection"]["write_started"], True)
+        self.assertEqual(reconcile["validation_status"], "unavailable")
+        self.assertEqual(reconcile["receipt_id"], calls[1]["receipt"]["id"])
+        for field in ("ready", "outcome", "projection"):
+            self.assertIsNone(reconcile[field])
+        self.assertNotIn(SECRET, json.dumps(value))
+
+    def test_scope_changed_receipt_and_snapshot_capacity_are_not_treated_as_native_evidence(self):
+        mutations = (
+            lambda s: s["metadata"].update(objective={"id": "another-objective"}),
+            lambda s: s["metadata"].update(limits={"reads": 1}),
+            lambda s: next(iter(s["operations"].values()))["intent"].update(request={}),
+            lambda s: next(iter(s["operations"].values())).update(payload={}),
+            lambda s: next(iter(s["operations"].values())).update(approval={}),
+            lambda s: next(iter(s["operations"].values()))["calls"][0]["receipt"].update(provenance_digest="sha256:" + "0" * 64),
+            lambda s: next(iter(s["operations"].values())).update(calls=[self.call("invoke", 1)] * 10001),
+        )
+        for index, mutate in enumerate(mutations):
+            with self.subTest(change=index):
+                snapshot = self.snapshot([self.call("invoke", 1)])
+                mutate(snapshot)
+                modules, _ = self.modules(snapshot)
+                with patch.object(execution, "_diagnostic_native", return_value=modules), self.assertRaises(Exception):
+                    execution._collect_native_diagnostics(self.prepared)
+
+    def test_bad_projection_is_marked_unavailable_without_copying_its_payload(self):
+        changes = (
+            lambda p: p.update(method="reconcile"),
+            lambda p: p.update(provenance_digest="sha256:" + "0" * 64),
+            lambda p: p.update(provider_response=SECRET),
+        )
+        for index, change in enumerate(changes):
+            with self.subTest(change=index):
+                modules, _ = self.modules(self.snapshot([self.call("invoke", 1)]), change_projection=change)
+                with patch.object(execution, "_diagnostic_native", return_value=modules):
+                    value = execution._collect_native_diagnostics(self.prepared)
+                self.assertEqual(value["status"], "partial")
+                self.assertIsNone(value["selected_calls"][0]["projection"])
+                self.assertNotIn(SECRET, json.dumps(value))
+
+    def test_legacy_projector_absence_does_not_open_or_guess_from_the_journal(self):
+        modules, events = self.modules(self.snapshot([self.call("invoke", 1)]), legacy=True)
+        with patch.object(execution, "_diagnostic_native", return_value=modules):
+            value = execution._collect_native_diagnostics(self.prepared)
+        self.assertEqual(value["status"], "legacy_unavailable")
+        self.assertIsNone(value["total_calls"])
+        self.assertEqual(events, [])
+
+    def test_replaced_or_oversized_original_journal_stops_before_native_loading(self):
+        journal = Path(self.paths["journal"])
+        with patch.object(execution, "MAX_JOURNAL", 1), patch.object(execution, "_diagnostic_native") as native:
+            with self.assertRaises(execution.ExecutionStopped):
+                execution._collect_native_diagnostics(self.prepared)
+        native.assert_not_called()
+        replacement = self.root / "replacement-journal"
+        put(replacement, journal.read_bytes())
+        os.replace(replacement, journal)
+        with patch.object(execution, "_diagnostic_native") as native, self.assertRaises(execution.ExecutionStopped):
+            execution._collect_native_diagnostics(self.prepared)
+        native.assert_not_called()
+
+    def test_collection_or_artifact_write_failure_cannot_change_applied_effect_or_resend(self):
+        accesses = []
+
+        class Sensitive(RuntimeError):
+            def __str__(self):
+                accesses.append("str")
+                raise AssertionError("diagnostic failure details were inspected")
+
+        with patch.object(execution, "_collect_native_diagnostics", side_effect=Sensitive(SECRET)):
+            report = self.run_fake()
+        self.assertEqual(report["status"], "applied")
+        self.assertEqual(self.diagnostic_artifact()["journal"]["status"], "unavailable")
+        self.assertEqual(accesses, [])
+        self.assertEqual(execution._json(self.root / "execution-report.json"), report)
+        with patch.object(execution, "_run") as run, self.assertRaises(execution.ExecutionStopped):
+            execution.execute(self.prepared, self.receipt(), token=SECRET)
+        run.assert_not_called()
+
+    def test_collector_failure_keeps_uncertain_native_results_and_both_attempts(self):
+        with patch.object(execution, "_collect_native_diagnostics", side_effect=ValueError(SECRET)):
+            report = self.run_fake(("uncertain", "uncertain"))
+        self.assertEqual(report["status"], "uncertain")
+        self.assertEqual(execution._json(self.root / "execution-report.json"), report)
+        value = self.diagnostic_artifact()
+        self.assertEqual(value["journal"]["status"], "unavailable")
+        self.assertEqual([value["wrapper"][method]["report_status"] for method in ("invoke", "reconcile")],
+                         ["uncertain", "uncertain"])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_unexpected_retainer_exception_cannot_replace_the_native_result(self):
+        with patch.object(execution, "_retain_native_diagnostics", side_effect=RuntimeError(SECRET)):
+            report = self.run_fake()
+        self.assertEqual(report["status"], "applied")
+        self.assertEqual(execution._json(self.root / "execution-report.json"), report)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_diagnostic_file_is_create_only_and_write_failure_preserves_result(self):
+        path = self.root / "native-call-diagnostics.json"
+        put(path, b"previous-private-diagnostic")
+        before = path.read_bytes()
+        report = self.run_fake()
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(report, execution._json(self.root / "execution-report.json"))
+        self.assertEqual(len(self.calls), 1)
+
+    def test_diagnostic_symlink_is_not_followed_or_overwritten(self):
+        target = self.root / "unrelated-private-evidence"
+        put(target, b"unrelated-private-evidence")
+        (self.root / "native-call-diagnostics.json").symlink_to(target)
+        report = self.run_fake()
+        self.assertEqual(report["status"], "applied")
+        self.assertEqual(target.read_bytes(), b"unrelated-private-evidence")
+        self.assertTrue((self.root / "native-call-diagnostics.json").is_symlink())
 
 
 if __name__ == "__main__":
