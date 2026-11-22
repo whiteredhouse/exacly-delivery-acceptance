@@ -1,0 +1,150 @@
+{
+  "schema_version": "0.1.0",
+  "kind": "fixed-native-positive-trial",
+  "repository": {
+    "id": 1442278205,
+    "full_name": "whiteredhouse/exacly-delivery-acceptance",
+    "node_id": "R_kgDOVfdrPQ"
+  },
+  "owner": {
+    "id": 1679024,
+    "login": "p1c2u"
+  },
+  "app_id": 5572362,
+  "installation_id": 177653055,
+  "core_revision": "9a5cd90b8d3c3b2acc2a00e7e68e175558025432",
+  "base_revision": "723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8",
+  "head_revision": "7e5f04446bd7eb2bd69132f27e8d20c9a967a156",
+  "merge_revision": "3196bd964e77c0963d2f00ff20c71408a345b54c",
+  "merge_tree": "e00a0e2b34ee976d90d53ad13fc162103d8f0f0a",
+  "base_ref": "refs/heads/main",
+  "head_ref": "refs/heads/canary/native-merge-001",
+  "pull_request": 5,
+  "objective": {
+    "id": "sha256:0f90a807b4a2a2fc6b533a4780065d4eee586379b66b1e74ab14f4735bc519d5",
+    "original_goal": "sha256:40d12b83193c13acc42ea9284d271a901275d619e7074eab95ad872162754f21"
+  },
+  "operation_key": "sha256:9ba69a7dd37c16fd2a647473496c04a67ec8eb4c55d1f9a9621770354239aad3",
+  "protected_files": [
+    {
+      "path": ".github/workflows/app-bootstrap.yml",
+      "before": "09554bb45697dd892af700b02ece48a14018055a",
+      "after": "09554bb45697dd892af700b02ece48a14018055a"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "before": "5486db43765ee2ebe1698f67dfd5d134d2b4ad1d",
+      "after": "5486db43765ee2ebe1698f67dfd5d134d2b4ad1d"
+    },
+    {
+      "path": ".gitignore",
+      "before": "e11d7d5d333b7664b32edc397e73c8a1f2b8f47e",
+      "after": "e11d7d5d333b7664b32edc397e73c8a1f2b8f47e"
+    },
+    {
+      "path": "README.md",
+      "before": "5a994569df05e3b968277c249fbcc5beb95543a3",
+      "after": "5a994569df05e3b968277c249fbcc5beb95543a3"
+    },
+    {
+      "path": "canary_app.py",
+      "before": "39fb8679eed9a12a26244a21158e71fc5f213f47",
+      "after": "39fb8679eed9a12a26244a21158e71fc5f213f47"
+    },
+    {
+      "path": "config/apps.json",
+      "before": "79dbb7ecee5e3602c540a2ef35af1c242f33d660",
+      "after": "79dbb7ecee5e3602c540a2ef35af1c242f33d660"
+    },
+    {
+      "path": "config/protection.json",
+      "before": "eb87a047a507dc8a9c7f1faf4b8d9088b3006f57",
+      "after": "eb87a047a507dc8a9c7f1faf4b8d9088b3006f57"
+    },
+    {
+      "path": "docs/APP-SETUP.md",
+      "before": "3c6ce37800c6fc3cafac2f007dfa0c2c3d41fcc1",
+      "after": "3c6ce37800c6fc3cafac2f007dfa0c2c3d41fcc1"
+    },
+    {
+      "path": "tests/test_app_bootstrap.py",
+      "before": "ccb6e2412548d694be7e0e2e98b8be94464ca3c1",
+      "after": "ccb6e2412548d694be7e0e2e98b8be94464ca3c1"
+    },
+    {
+      "path": "tests/test_canary_app.py",
+      "before": "307ff33467db6d24656cd6941af37a3c92e40832",
+      "after": "307ff33467db6d24656cd6941af37a3c92e40832"
+    },
+    {
+      "path": "tests/test_verify_merge.py",
+      "before": "ab65fdd825243301f477db72d1842540bb8a4d82",
+      "after": "ab65fdd825243301f477db72d1842540bb8a4d82"
+    },
+    {
+      "path": "tools/app_bootstrap.py",
+      "before": "7cc93511360f2607b0454f3d25c4ac78d8b4bd67",
+      "after": "7cc93511360f2607b0454f3d25c4ac78d8b4bd67"
+    },
+    {
+      "path": "tools/verify_merge.py",
+      "before": "4b3cea314241e843a8bda4838c8fcba31dd4bce7",
+      "after": "4b3cea314241e843a8bda4838c8fcba31dd4bce7"
+    }
+  ],
+  "policy": {
+    "schema_version": "0.1.0",
+    "profile": "github-atomic-merge-v1",
+    "enforcement": "atomic-ref-leases-and-current-server-protection",
+    "policy_stability": "trusted-administrators-preserve-approved-policy-during-call",
+    "server_passing_conclusions": [
+      "success",
+      "neutral",
+      "skipped"
+    ],
+    "base_ref": "refs/heads/main",
+    "protection_digest": "sha256:b7171c6c47b63222b368fb557db8ffcc1f7f6ddec9357d5084bc1afe3cab3e64",
+    "minimum_approvals": 1,
+    "required_checks": [
+      {
+        "name": "exacly-generated-merge",
+        "app_id": 5572341
+      }
+    ],
+    "contract": {
+      "model": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c",
+      "criteria": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c",
+      "bindings": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c",
+      "observer": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c"
+    }
+  },
+  "limits": {
+    "operations": 1,
+    "wall_time_ms": 360000,
+    "reads": 192,
+    "rollbacks": 0
+  },
+  "call_limits": {
+    "inspect": {
+      "wall_time_ms": 120000,
+      "read_calls": 64,
+      "write_calls": 0
+    },
+    "invoke": {
+      "wall_time_ms": 120000,
+      "read_calls": 64,
+      "write_calls": 2
+    },
+    "reconcile": {
+      "wall_time_ms": 120000,
+      "read_calls": 64,
+      "write_calls": 0
+    }
+  },
+  "local_grant_seconds": 1800,
+  "owner_wait_seconds": 600,
+  "maximum_relay_reads": 64,
+  "maximum_polls_per_phase": 25,
+  "poll_interval_seconds": 20,
+  "retention": "Original private journal/key/runtime exist only during this continuously alive hosted job. Safe metadata artifacts are evidence; they cannot restore original device/inode recovery after runner loss."
+}

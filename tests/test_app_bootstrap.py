@@ -3,6 +3,7 @@
 import argparse
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -191,6 +192,20 @@ class AppBootstrapTests(unittest.TestCase):
         with patch.object(app, "ROOT", self.fixture.source), patch.object(app, "fetch_public", self.fixture.fetch), patch.dict(os.environ, self.environment if environment is None else environment, clear=True):
             return app.execute(arguments, self.backend.sender)
 
+    def cli(self, arguments, sender=None):
+        self.backend.output = arguments.out
+        argv = ["app_bootstrap.py", arguments.command,
+                "--installation-id", str(arguments.installation_id), "--out", arguments.out]
+        if arguments.command == "preflight":
+            argv.extend(("--role", arguments.role))
+        else:
+            argv.extend(("--pr-number", str(arguments.pr_number),
+                         "--source-commit", arguments.source_commit, "--run-url", arguments.run_url))
+        stdout = io.StringIO()
+        with patch.object(app, "ROOT", self.fixture.source), patch.object(app, "fetch_public", self.fixture.fetch), patch.object(app, "transport", sender or self.backend.sender), patch.dict(os.environ, self.environment, clear=True), patch.object(sys, "argv", argv), patch.object(sys, "stdout", stdout):
+            status = app.main()
+        return status, json.loads(stdout.getvalue())
+
     def test_actual_fixed_verification_creates_one_M_check_after_private_intent(self):
         arguments = self.fixture.arguments()
         result = self.execute(arguments)
@@ -216,6 +231,51 @@ class AppBootstrapTests(unittest.TestCase):
             self.assertFalse(result["opaque_token_issuer_api_verified"])
             self.assertEqual(result["provider_check_posts"], 0)
         self.assertEqual(self.backend.posts, 0)
+
+    def test_cli_reports_rejected_merger_guard_and_preserves_ready_output(self):
+        self.backend.repository["permissions"]["admin"] = True
+        status, summary = self.cli(self.fixture.arguments("preflight", "merger"))
+        self.assertEqual(status, 1)
+        self.assertEqual(summary["status"], "rejected")
+        self.assertEqual(summary["reason"], "merge actor is not a non-admin/non-maintainer push actor")
+        self.assertEqual(summary["stage"], "actor_permissions")
+        self.assertEqual(summary["provider_check_posts"], 0)
+        self.assertEqual(self.backend.posts, 0)
+        status, summary = self.cli(self.fixture.arguments("preflight", "verifier"))
+        self.assertEqual(status, 0)
+        self.assertEqual(summary["status"], "ready")
+        self.assertEqual(set(summary), {"status", "out", "provider_check_posts"})
+
+    def test_cli_reports_failed_preflight_read_without_credential_diagnostics(self):
+        for suffix, stage in (("/branches/main/protection", "classic_protection_read"),
+                              ("/branches/main/protection/required_signatures", "required_signatures_read"),
+                              ("/rules/branches/main", "effective_rules_read")):
+            for error, reason in ((app.Refused("GitHub rejected the bounded request"), "GitHub rejected the bounded request"),
+                                  (OSError("raw HTTP/Git failure " + ROLE_TOKEN), "bounded bootstrap could not complete"),
+                                  (app.Refused("unexpected diagnostic " + ROLE_TOKEN), "bounded bootstrap could not complete")):
+                def sender(method, url, headers, payload, timeout):
+                    if url == app.API + app.PREFIX + suffix:
+                        raise error
+                    return self.backend.sender(method, url, headers, payload, timeout)
+                status, summary = self.cli(self.fixture.arguments("preflight", "merger"), sender)
+                self.assertEqual(status, 1)
+                self.assertEqual(summary["status"], "rejected")
+                self.assertEqual(summary["stage"], stage)
+                self.assertEqual(summary["reason"], reason)
+                self.assertEqual(summary["provider_check_posts"], 0)
+                self.assertNotIn(ROLE_TOKEN, json.dumps(summary))
+                self.assertNotIn(READ_TOKEN, json.dumps(summary))
+        self.assertEqual(self.backend.posts, 0)
+
+    def test_cli_keeps_lost_check_reply_uncertain_without_preflight_fields(self):
+        self.backend.post_error = True
+        status, summary = self.cli(self.fixture.arguments())
+        self.assertEqual(status, 1)
+        self.assertEqual(summary["status"], "uncertain")
+        self.assertEqual(summary["provider_check_posts"], 1)
+        self.assertEqual(set(summary), {"status", "out", "provider_check_posts"})
+        self.assertNotIn(ROLE_TOKEN, json.dumps(summary))
+        self.assertEqual(self.backend.posts, 1)
 
     def test_wrong_installation_or_source_is_rejected_before_API_calls(self):
         for field, value in (("installation_id", 1), ("source_commit", "0" * 40)):

@@ -1,0 +1,441 @@
+{
+  "schema_version": "0.1.0",
+  "kind": "fixed-native-supplemental-trial",
+  "repository": {
+    "id": 1442278205,
+    "full_name": "whiteredhouse/exacly-delivery-acceptance",
+    "node_id": "R_kgDOVfdrPQ"
+  },
+  "owner": {
+    "id": 1679024,
+    "login": "p1c2u"
+  },
+  "app_id": 5572362,
+  "installation_id": 177653055,
+  "core_revision": "49b941d6c3a9002d373a19a52b269391d9aa31a6",
+  "base_revision": "723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8",
+  "head_revision": "7e5f04446bd7eb2bd69132f27e8d20c9a967a156",
+  "merge_revision": "3196bd964e77c0963d2f00ff20c71408a345b54c",
+  "merge_tree": "e00a0e2b34ee976d90d53ad13fc162103d8f0f0a",
+  "base_ref": "refs/heads/main",
+  "head_ref": "refs/heads/canary/native-merge-001",
+  "pull_request": 5,
+  "objective": {
+    "id": "sha256:0f90a807b4a2a2fc6b533a4780065d4eee586379b66b1e74ab14f4735bc519d5",
+    "original_goal": "sha256:40d12b83193c13acc42ea9284d271a901275d619e7074eab95ad872162754f21"
+  },
+  "operation_key": "sha256:9ba69a7dd37c16fd2a647473496c04a67ec8eb4c55d1f9a9621770354239aad3",
+  "protected_files": [
+    {
+      "path": ".github/workflows/app-bootstrap.yml",
+      "before": "09554bb45697dd892af700b02ece48a14018055a",
+      "after": "09554bb45697dd892af700b02ece48a14018055a"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "before": "5486db43765ee2ebe1698f67dfd5d134d2b4ad1d",
+      "after": "5486db43765ee2ebe1698f67dfd5d134d2b4ad1d"
+    },
+    {
+      "path": ".gitignore",
+      "before": "e11d7d5d333b7664b32edc397e73c8a1f2b8f47e",
+      "after": "e11d7d5d333b7664b32edc397e73c8a1f2b8f47e"
+    },
+    {
+      "path": "README.md",
+      "before": "5a994569df05e3b968277c249fbcc5beb95543a3",
+      "after": "5a994569df05e3b968277c249fbcc5beb95543a3"
+    },
+    {
+      "path": "canary_app.py",
+      "before": "39fb8679eed9a12a26244a21158e71fc5f213f47",
+      "after": "39fb8679eed9a12a26244a21158e71fc5f213f47"
+    },
+    {
+      "path": "config/apps.json",
+      "before": "79dbb7ecee5e3602c540a2ef35af1c242f33d660",
+      "after": "79dbb7ecee5e3602c540a2ef35af1c242f33d660"
+    },
+    {
+      "path": "config/protection.json",
+      "before": "eb87a047a507dc8a9c7f1faf4b8d9088b3006f57",
+      "after": "eb87a047a507dc8a9c7f1faf4b8d9088b3006f57"
+    },
+    {
+      "path": "docs/APP-SETUP.md",
+      "before": "3c6ce37800c6fc3cafac2f007dfa0c2c3d41fcc1",
+      "after": "3c6ce37800c6fc3cafac2f007dfa0c2c3d41fcc1"
+    },
+    {
+      "path": "tests/test_app_bootstrap.py",
+      "before": "ccb6e2412548d694be7e0e2e98b8be94464ca3c1",
+      "after": "ccb6e2412548d694be7e0e2e98b8be94464ca3c1"
+    },
+    {
+      "path": "tests/test_canary_app.py",
+      "before": "307ff33467db6d24656cd6941af37a3c92e40832",
+      "after": "307ff33467db6d24656cd6941af37a3c92e40832"
+    },
+    {
+      "path": "tests/test_verify_merge.py",
+      "before": "ab65fdd825243301f477db72d1842540bb8a4d82",
+      "after": "ab65fdd825243301f477db72d1842540bb8a4d82"
+    },
+    {
+      "path": "tools/app_bootstrap.py",
+      "before": "7cc93511360f2607b0454f3d25c4ac78d8b4bd67",
+      "after": "7cc93511360f2607b0454f3d25c4ac78d8b4bd67"
+    },
+    {
+      "path": "tools/verify_merge.py",
+      "before": "4b3cea314241e843a8bda4838c8fcba31dd4bce7",
+      "after": "4b3cea314241e843a8bda4838c8fcba31dd4bce7"
+    }
+  ],
+  "policy": {
+    "schema_version": "0.1.0",
+    "profile": "github-atomic-merge-v1",
+    "enforcement": "atomic-ref-leases-and-current-server-protection",
+    "policy_stability": "trusted-administrators-preserve-approved-policy-during-call",
+    "server_passing_conclusions": [
+      "success",
+      "neutral",
+      "skipped"
+    ],
+    "base_ref": "refs/heads/main",
+    "protection_digest": "sha256:b7171c6c47b63222b368fb557db8ffcc1f7f6ddec9357d5084bc1afe3cab3e64",
+    "minimum_approvals": 1,
+    "required_checks": [
+      {
+        "name": "exacly-generated-merge",
+        "app_id": 5572341
+      }
+    ],
+    "contract": {
+      "model": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c",
+      "criteria": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c",
+      "bindings": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c",
+      "observer": "sha256:143b6b4bbda84093e6b4ce441fe1ab971f6669fce972bdbe980cc503b342882c"
+    }
+  },
+  "limits": {
+    "operations": 1,
+    "wall_time_ms": 360000,
+    "reads": 192,
+    "rollbacks": 0
+  },
+  "call_limits": {
+    "inspect": {
+      "wall_time_ms": 120000,
+      "read_calls": 64,
+      "write_calls": 0
+    },
+    "invoke": {
+      "wall_time_ms": 120000,
+      "read_calls": 64,
+      "write_calls": 2
+    },
+    "reconcile": {
+      "wall_time_ms": 120000,
+      "read_calls": 64,
+      "write_calls": 0
+    }
+  },
+  "local_grant_seconds": 1800,
+  "owner_wait_seconds": 1200,
+  "maximum_relay_reads": 64,
+  "maximum_polls_per_phase": 25,
+  "poll_interval_seconds": 45,
+  "retention": "Fresh installation exists only during this continuously alive job, after explicit supplemental allocation approval. All three consumed allocations stay fully charged in coordinator accounting; no original journal/key is restored and no native cross-journal accounting is claimed. Safe artifacts cannot preserve original filesystem identity after runner loss.",
+  "accounting": {
+    "schema_version": "0.2.0",
+    "kind": "supplemental-native-trial-allocation",
+    "original_objective": {
+      "id": "sha256:0f90a807b4a2a2fc6b533a4780065d4eee586379b66b1e74ab14f4735bc519d5",
+      "original_goal": "sha256:40d12b83193c13acc42ea9284d271a901275d619e7074eab95ad872162754f21"
+    },
+    "operation_key": "sha256:9ba69a7dd37c16fd2a647473496c04a67ec8eb4c55d1f9a9621770354239aad3",
+    "consumed_allocations": [
+      {
+        "run_id": 41526436188,
+        "run_attempt": 1,
+        "source": "4f7418a9e7127812eb4515ef8c3c803e1810584d",
+        "workflow_id": 403984410,
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "journal_id": "8e89b70f6dfe4afbb7ee4829cbbab208",
+        "intent_id": "sha256:2ebdca1ea991adfc46562ff4fc261f366fc62cd54a668885cfcac47a9b5f4198",
+        "proposal_artifact": {
+          "id": 13184177941,
+          "digest": "sha256:39807d13e77177f9d251da9b00601997505a71b83d0d26193f6864a20d3abca5"
+        },
+        "result_artifact": {
+          "id": 13184223225,
+          "digest": "sha256:35b5a097523edad384a5858503c79dd5b053de1262d0de2aab8cd949cdd3ed21"
+        },
+        "native_status": "prepared",
+        "native_effect_authorized": false,
+        "native_invocation_released": false,
+        "native_completion_receipt_present": false,
+        "safe_result_document_digest": "sha256:f21729aa20ebf37e39f9a4b2bc82b544f661e57aa85bcb5d70456c58b5d784d4",
+        "proof_basis": "Reviewed retained native merge-result from the exact result artifact, actual selected intent and pinned stopped-before-invoke engine path; failure status or missing marker alone is not the proof.",
+        "charged_limits": {
+          "operations": 1,
+          "wall_time_ms": 360000,
+          "reads": 192,
+          "rollbacks": 0
+        }
+      },
+      {
+        "run_id": 41665083190,
+        "run_attempt": 1,
+        "source": "34eb2e67f21fa99ddafe1a910ff655123aa83d85",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410,
+        "charged_limits": {
+          "operations": 1,
+          "wall_time_ms": 360000,
+          "reads": 192,
+          "rollbacks": 0
+        },
+        "native_invocation_released": false,
+        "native_completion_receipt_present": false,
+        "evidence": {
+          "kind": "reviewed-github-job-log-and-pinned-before-invoke-path",
+          "job_id": 126018155097,
+          "job_url": "https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/41665083190/job/126018155097",
+          "safe_report": {
+            "error_code": "native_positive_trial_stopped",
+            "native_effect": "not_attempted",
+            "phase": "merge",
+            "resend_allowed": false,
+            "status": "stopped"
+          },
+          "report_log_timestamp": "2026-11-03T15:51:33.6523257Z",
+          "official_token_revocation_observed": true,
+          "source_revision": "34eb2e67f21fa99ddafe1a910ff655123aa83d85",
+          "coordinator_path": "tools/native_positive_trial.py",
+          "execution_path": "tools/native_trial_execution.py",
+          "artifact_revalidation": "unavailable; artifacts endpoint returned zero records on 2026-11-21",
+          "historical_artifact_references_not_revalidated": [
+            {
+              "role": "merge-proposal",
+              "id": 13246262780,
+              "digest": "sha256:8de54638555f8d6d1eb1263c86a2cb5f5ea7d2e2a1609ef54aa453820a4fc12b"
+            },
+            {
+              "role": "trial-results",
+              "id": 13246179308,
+              "digest": "sha256:29a6a21a41d1926f340661f9a3e11eeac7b379e4bf3e72d49fd65ad2b3c478bf"
+            }
+          ],
+          "precise_wait_failure_cause": "not retained",
+          "proof_basis": "The actual job's closed stopped report says native_effect not_attempted. At its exact reviewed source, the coordinator's execution helper writes an execution-attempt marker before public native invocation and preserves an attempted or known-applied effect in failures. This relies on the pinned trusted CI source and its retained safe log; old artifact contents and the lost private journal were not revalidated. Run failure, artifact absence or an unmerged PR alone is not the proof."
+        }
+      },
+      {
+        "run_id": 44895283908,
+        "run_attempt": 1,
+        "source": "6dd46ac55d87f07a2a62328cb182920383b12918",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410,
+        "charged_limits": {
+          "operations": 1,
+          "wall_time_ms": 360000,
+          "reads": 192,
+          "rollbacks": 0
+        },
+        "native_invocation_released": false,
+        "native_completion_receipt_present": false,
+        "evidence": {
+          "kind": "reviewed-safe-artifacts-and-pinned-before-invoke-path",
+          "job_id": 136819502140,
+          "job_url": "https://github.com/whiteredhouse/exacly-delivery-acceptance/actions/runs/44895283908/job/136819502140",
+          "source_revision": "6dd46ac55d87f07a2a62328cb182920383b12918",
+          "coordinator_path": "tools/native_positive_trial.py",
+          "execution_path": "tools/native_trial_execution.py",
+          "proposal_artifact": {
+            "id": 14703513720,
+            "digest": "sha256:a1dbf4cdcc79c18dfb12dafea225eaae561945084eef86e7cb59b7cc32f31f01"
+          },
+          "result_artifact": {
+            "id": 14703634122,
+            "digest": "sha256:6e9057d9bdaf2643275197f357b7d3251fb323f2d6382f04ecd394f045c0bd0f"
+          },
+          "safe_report": {
+            "diagnostic": {
+              "code": "submission_expired",
+              "component": "relay"
+            },
+            "error_code": "native_positive_trial_stopped",
+            "native_effect": "not_attempted",
+            "phase": "merge",
+            "resend_allowed": false,
+            "status": "stopped"
+          },
+          "safe_result_document_digest": "sha256:47263fad87e1a10014d31305a4cb4f2f1a45732de34e8b0af6ae718994b3bade",
+          "prepared_allocation_preserved": true,
+          "submit_by": "2026-11-21T10:50:10.825727Z",
+          "verify_by": "2026-11-21T10:51:21.825727Z",
+          "report_log_timestamp": "2026-11-21T10:50:11.3744342Z",
+          "official_token_revocation_log_timestamp": "2026-11-21T10:50:13.7156076Z",
+          "late_owner_selection": {
+            "comment_id": 7061530282,
+            "owner_id": 1679024,
+            "created_at": "2026-11-21T10:53:08Z",
+            "updated_at": "2026-11-21T10:53:08Z",
+            "exact_command": true,
+            "seconds_after_submit_cutoff": 177.174273,
+            "accepted": false
+          },
+          "proof_basis": "The exact safe result archive and completed job log report relay submission_expired, merge not_attempted and resend disallowed. The pinned coordinator's execution helper writes its attempt marker before public native invocation and preserves attempted or known-applied effects. The unchanged provider target corroborates no merge but is not the proof alone. The correct owner command arrived after the cutoff and completed run, so it cannot select this installation or authorize continuation. No private journal, marker key or App token was recovered or independently measured."
+        }
+      }
+    ],
+    "charged_prior_limits": {
+      "operations": 3,
+      "wall_time_ms": 1080000,
+      "reads": 576,
+      "rollbacks": 0
+    },
+    "additional_limits": {
+      "operations": 1,
+      "wall_time_ms": 360000,
+      "reads": 192,
+      "rollbacks": 0
+    },
+    "aggregate_limits": {
+      "operations": 4,
+      "wall_time_ms": 1440000,
+      "reads": 768,
+      "rollbacks": 0
+    },
+    "authorization": "exact-owner-environment-approval-comment-before-initialization",
+    "accounting_scope": "fixed-canary-coordinator-across-complete-native-trial-history-not-native-journal-import",
+    "history_baseline": [
+      {
+        "run_id": 41366095573,
+        "run_attempt": 1,
+        "source": "068de1d70f8bda3f6b331e30a7a37bef998bbe91",
+        "title": "canary-bootstrap:preflight:pr-0",
+        "status": "completed",
+        "conclusion": "skipped",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41372091185,
+        "run_attempt": 1,
+        "source": "723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8",
+        "title": "canary-bootstrap:preflight:pr-0",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41422406506,
+        "run_attempt": 1,
+        "source": "fdbc8f16d4720f0488853ad7ff67a9d00040c39a",
+        "title": "canary-bootstrap:diagnose-merger:pr-0",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41469016096,
+        "run_attempt": 1,
+        "source": "704d930c9f40701e6913a7de93bb2f1c97ea335e",
+        "title": "canary-bootstrap:app-grant-preflight:pr-0",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41473383834,
+        "run_attempt": 1,
+        "source": "860221a3aa537b415b6411f45c8755fb99fb11e8",
+        "title": "canary-bootstrap:create-canary:pr-0",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41477154015,
+        "run_attempt": 1,
+        "source": "37b63cac6b2a60e3e924bee1e9bbe9553d0efe7a",
+        "title": "canary-bootstrap:finish-canary-pr:pr-0",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41477611855,
+        "run_attempt": 1,
+        "source": "723cb8f3a77d4208cb5840e750cca4b9c3c0c7c8",
+        "title": "canary-bootstrap:verify:pr-5",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41500021619,
+        "run_attempt": 1,
+        "source": "0c00e64e1181a232b1253dbfe7b26f28732d0c2f",
+        "title": "canary-bootstrap:app-grant-preflight:pr-0",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41526436188,
+        "run_attempt": 1,
+        "source": "4f7418a9e7127812eb4515ef8c3c803e1810584d",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41560965600,
+        "run_attempt": 1,
+        "source": "f78d4feec3c090faa3f9c511b292a7d225d5b52b",
+        "title": "canary-bootstrap:native-readiness-diagnostic:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41626063519,
+        "run_attempt": 1,
+        "source": "0af0d847bd06d1d2a9cd3658df14d39bff431907",
+        "title": "canary-bootstrap:native-readiness-diagnostic:pr-5",
+        "status": "completed",
+        "conclusion": "success",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 41665083190,
+        "run_attempt": 1,
+        "source": "34eb2e67f21fa99ddafe1a910ff655123aa83d85",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      },
+      {
+        "run_id": 44895283908,
+        "run_attempt": 1,
+        "source": "6dd46ac55d87f07a2a62328cb182920383b12918",
+        "title": "canary-bootstrap:native-positive-trial:pr-5",
+        "status": "completed",
+        "conclusion": "failure",
+        "workflow_id": 403984410
+      }
+    ]
+  },
+  "owner_submission_seconds": 900
+}
