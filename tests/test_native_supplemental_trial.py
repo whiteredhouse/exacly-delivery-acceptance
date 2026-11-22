@@ -499,7 +499,7 @@ class SupplementalNativePacketTests(unittest.TestCase):
                 native.assert_not_called()
                 self.assertFalse(self.private.exists())
 
-    def test_actual_fixed_runtime_and_controlled_provider_keep_original_goal_and_receipt_binding(self):
+    def integration(self, scenario=None):
         if not self.core.is_dir():
             self.fail("set EXACLY_NATIVE_SUPPLEMENTAL_TEST_CORE to the exact fixed runtime checkout")
         # Reuse the full legacy local-storage/controlled-provider integration and
@@ -511,17 +511,31 @@ class SupplementalNativePacketTests(unittest.TestCase):
             "CURL_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy",
             "https_proxy", "all_proxy", "no_proxy",
         }
+        environment = {key: value for key, value in os.environ.items() if key in runtime_names}
+        if scenario is not None:
+            environment["EXACLY_CONTROLLED_DIAGNOSTIC_SCENARIO"] = scenario
         result = subprocess.run(
             [sys.executable, "-I", "-B", "-c", NATIVE_INTEGRATION,
              str(ROOT / "tools/native_trial_packets.py"), str(self.core),
              str(ROOT / "config/native-supplemental-trial.json"), str(self.private)],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=180, check=False, env={key: value for key, value in os.environ.items() if key in runtime_names},
+            timeout=180, check=False, env=environment,
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        self.assertEqual(json.loads(result.stdout), {
+        return json.loads(result.stdout)
+
+    def test_actual_fixed_runtime_and_controlled_provider_keep_original_goal_and_receipt_binding(self):
+        self.assertEqual(self.integration(), {
             "prepared": True, "controlled_native_reads": 58, "controlled_native_writes": 2,
             "observer_bound": True, "same_job_restore": True, "socket_attempts": 0,
+            "native_diagnostics_validated": True,
+        })
+
+    def test_retained_engine_boundary_does_not_erase_valid_native_invoke_diagnostics(self):
+        self.assertEqual(self.integration("engine-boundary-reconcile"), {
+            "partial_diagnostics": True, "invoke_retained": True,
+            "reconcile_native_validation": "unavailable", "journal_unchanged": True,
+            "controlled_atomic_mutations": 1, "socket_attempts": 0,
         })
 
 

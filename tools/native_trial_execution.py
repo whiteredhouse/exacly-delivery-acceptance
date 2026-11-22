@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
@@ -26,6 +27,12 @@ TOKEN = "EXACLY_DELIVERY_MERGE_TOKEN"
 MAX_OUTPUT = 2 * 1024 * 1024
 MAX_DOCUMENT = 2 * 1024 * 1024
 MAX_JOURNAL = 64 * 1024 * 1024
+MAX_DIAGNOSTICS = 32 * 1024
+DIAGNOSTIC_LOCK_TIMEOUT = 0.25
+REPORT_STATUSES = frozenset({
+    "applied", "rejected", "uncertain", "blocked", "prepared",
+    "approval_required", "missing",
+})
 BOUND_TEST_DIGEST = "1fbc93d0635e9faf78c6da77be9e7c6df21b3e34ce62a4a58b9b0f5fbb21313b"
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -703,15 +710,7 @@ def _report(value, prepared):
         and value.get("profile") == "product-delivery-v1"
         and value.get("kind") == "delivery-report"
         and value.get("status")
-        in {
-            "applied",
-            "rejected",
-            "uncertain",
-            "blocked",
-            "prepared",
-            "approval_required",
-            "missing",
-        }
+        in REPORT_STATUSES
         and value.get("journal")
         == {"path": prepared["paths"]["journal"], "id": prepared["journal_id"]}
         and value.get("operation_key")
@@ -756,8 +755,181 @@ def _cli(prepared, selection, root, name, token, *, reconcile=False):
     return report
 
 
+def _diagnostic_native(prepared):
+    """Use only the exact already selected local implementation; never start a CLI."""
+    package = _path(str(prepared["core_source"])) / "python/src/exacly"
+    modules = []
+    for name in ("automatic_merge", "delivery_store"):
+        module = importlib.import_module("exacly." + name)
+        require(
+            Path(module.__file__).resolve(strict=True) == package / (name + ".py"),
+            "native_trial_runtime_changed",
+        )
+        modules.append(module)
+    return tuple(modules)
+
+
+def _unavailable_diagnostics(*, legacy=False):
+    return {
+        "status": "legacy_unavailable" if legacy else "unavailable",
+        "code": "native_diagnostics_legacy_runtime" if legacy else "native_diagnostics_unavailable",
+        "total_calls": None,
+        "selected_calls": [],
+    }
+
+
+def _collect_native_diagnostics(prepared, *, profile=None):
+    """Authenticate a bounded original-store snapshot, then project selected results.
+
+    Full native validation intentionally runs on the original host and may read
+    its pinned runtime. The core projector itself is pure. Neither path performs
+    provider I/O, changes the journal, or makes another native decision.
+    """
+    _integrity(prepared, profile=profile)
+    native, store = _diagnostic_native(prepared)
+    project = getattr(native, "project_result_diagnostics", None)
+    if not callable(project):
+        return _unavailable_diagnostics(legacy=True)
+    proposal = prepared["proposal"]
+    request, payload = proposal["request"], proposal["payload"]
+    configuration, policy = proposal["configuration"], proposal["policy"]
+    native.validate_payload(request, payload, configuration, policy)
+    require(
+        native.configuration_digest(configuration, policy)
+        == proposal["operation_approval"]["adapter"]["configuration_digest"],
+        "native_trial_packet_changed",
+    )
+    with store.opened(
+        _path(prepared["paths"]["journal"]), prepared["journal_id"],
+        write=False, lock_timeout=DIAGNOSTIC_LOCK_TIMEOUT,
+    ) as journal:
+        snapshot = journal.read()
+    metadata = snapshot["metadata"]
+    require(
+        metadata["objective"] == prepared["spec"]["objective"]
+        and metadata["limits"] == prepared["spec"]["limits"]
+        and metadata["native_limits"] == proposal["native_limits"],
+        "native_trial_journal_changed",
+    )
+    operation = snapshot["operations"].get(request["operation_key"])
+    require(
+        type(operation) is dict
+        and operation["intent"]["request"] == request
+        and operation["payload"] == payload
+        and operation["approval"] == proposal["operation_approval"],
+        "native_trial_journal_changed",
+    )
+    calls = operation["calls"]
+    require(type(calls) is list and len(calls) <= 10000, "native_trial_output_bound")
+    latest = {}
+    for ordinal, call in enumerate(calls):
+        method = call["method"]
+        require(method in ("inspect", "invoke", "reconcile"), "native_trial_journal_changed")
+        latest[method] = (ordinal, call)
+    selected = []
+    partial = False
+    for _, call in sorted(latest.values(), key=lambda item: item[0]):
+        result, receipt = call["result"], call["receipt"]
+        require(type(call["id"]) is str and DIGEST.fullmatch(call["id"]), "native_trial_journal_changed")
+        item = {
+            "call_id": call["id"], "method": call["method"],
+            "result_retained": result is not None,
+            "receipt_id": None, "outcome": None, "ready": None,
+            "provenance_digest": None, "projection": None,
+            "validation_status": "not_retained", "code": "native_result_not_retained",
+        }
+        if result is not None:
+            # Journal validation establishes immutable call/receipt identities even
+            # when a watchdog retained only an engine-boundary result. Such a
+            # result cannot authenticate a GitHub diagnostic, but must not erase
+            # another method's independently validated native provenance.
+            provenance_digest = digest(result["provenance"])
+            item["provenance_digest"] = provenance_digest
+            if call["method"] != "inspect":
+                require(
+                    type(receipt) is dict and DIGEST.fullmatch(receipt["id"])
+                    and receipt["provenance_digest"] == provenance_digest,
+                    "native_trial_journal_changed",
+                )
+                item["receipt_id"] = receipt["id"]
+            try:
+                checked = native.validate_result(
+                    call["method"], request, payload, result,
+                    configuration=configuration, policy=policy,
+                )
+                projection = project(call["method"], checked)
+                require(
+                    type(projection) is dict
+                    and set(projection) == {
+                        "schema_version", "profile", "method", "provenance_digest",
+                        "diagnostic_available", "write_started", "marker_object",
+                        "preparation_object", "diagnostic",
+                    }
+                    and projection["schema_version"] == "0.1.0"
+                    and projection["profile"] == "github-atomic-merge-diagnostics-v1"
+                    and projection["method"] == call["method"]
+                    and projection["provenance_digest"] == provenance_digest,
+                    "native_trial_invalid_diagnostic_projection",
+                )
+            except Exception:  # noqa: BLE001 -- no boundary/native exception details escape
+                partial = True
+                item["validation_status"] = "unavailable"
+                item["code"] = "native_result_validation_unavailable"
+            else:
+                item["validation_status"], item["code"] = "validated", "native_result_validated"
+                item["projection"] = projection
+                if call["method"] == "inspect":
+                    item["ready"] = checked["ready"]
+                else:
+                    item["outcome"] = checked["outcome"]
+        selected.append(item)
+    _integrity(prepared, profile=profile)
+    result = {
+        "status": "partial" if partial else "collected",
+        "code": "native_diagnostics_partially_collected" if partial else "native_diagnostics_collected",
+        "total_calls": len(calls), "selected_calls": selected,
+    }
+    require(len(selected) <= 3 and len(canonical(result)) <= MAX_DIAGNOSTICS, "native_trial_output_bound")
+    return result
+
+
+def _retain_native_diagnostics(prepared, root, wrapper, *, token, profile=None):
+    """Best-effort create-only safe export; failure never changes native outcome."""
+    try:
+        journal = _collect_native_diagnostics(prepared, profile=profile)
+    except Exception:  # noqa: BLE001 -- never inspect local/provider failure text
+        journal = _unavailable_diagnostics()
+    document = {
+        "schema_version": "0.1.0", "kind": "native-call-diagnostics",
+        "authority_granted": False, "resend_allowed": False,
+        "wrapper": wrapper, "journal": journal,
+    }
+    try:
+        require(len(canonical(document)) <= MAX_DIAGNOSTICS, "native_trial_output_bound")
+        _write(root / "native-call-diagnostics.json", document, token)
+    except Exception:  # noqa: BLE001 -- preserve the original result or exception
+        pass
+
+
+def _wrapper_call(wrapper, method, prepared, selection, root, token):
+    state = wrapper[method]
+    state["status"] = "started"
+    try:
+        report = _cli(prepared, selection, root, method, token, reconcile=method == "reconcile")
+        state["status"], state["report_status"] = "returned", report["status"]
+        return report
+    finally:
+        if state["status"] == "started":
+            state["status"], state["code"] = "unresolved", "native_child_unresolved"
+
+
 def execute(prepared, selection_receipt, *, token, profile=None):
     """Consume one selected invocation; uncertainty permits only one same-scope read."""
+    root = None
+    wrapper = {
+        method: {"status": "not_started", "report_status": None, "code": None}
+        for method in ("invoke", "reconcile")
+    }
     try:
         root = _integrity(prepared, profile=profile)
         selection = prepared["selection"]
@@ -783,7 +955,7 @@ def execute(prepared, selection_receipt, *, token, profile=None):
             {"kind": "one-native-invocation", "selection_receipt": selection_receipt},
             token,
         )
-        report = _cli(prepared, selection, root, "invoke", token)
+        report = _wrapper_call(wrapper, "invoke", prepared, selection, root, token)
         _write(root / "invoke-report.json", report, token)
         if report["status"] == "uncertain":
             bounds = prepared["proposal"]["configuration"]["call_limits"]["reconcile"]
@@ -803,9 +975,7 @@ def execute(prepared, selection_receipt, *, token, profile=None):
                     token,
                 )
                 try:
-                    report = _cli(
-                        prepared, selection, root, "reconcile", token, reconcile=True
-                    )
+                    report = _wrapper_call(wrapper, "reconcile", prepared, selection, root, token)
                     _write(root / "reconcile-report.json", report, token)
                 except ExecutionStopped:
                     _write(
@@ -819,6 +989,12 @@ def execute(prepared, selection_receipt, *, token, profile=None):
         raise
     except Exception:  # noqa: BLE001 -- public boundary emits only fixed safe codes
         raise ExecutionStopped("native_trial_execution_stopped") from None
+    finally:
+        if root is not None:
+            try:
+                _retain_native_diagnostics(prepared, root, wrapper, token=token, profile=profile)
+            except Exception:  # noqa: BLE001 -- diagnostics cannot mask a native outcome
+                pass
 
 
 def _applied(prepared, report):

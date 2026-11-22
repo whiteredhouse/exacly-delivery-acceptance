@@ -1,7 +1,24 @@
 # Supplemental native positive trial
 
-All three recorded allocations are consumed. This protocol proposes one further
-allowance for an attended trial of the same nonproduction objective, operation
+The fourth allocation was consumed by run `44911130619` at source
+`44a7e5813e490be8d0549fb6320ee6f4b77a4d43`, using native core
+`bd60d9d58c44390089a435d075a77f132cb684da`. It released native invocation and
+retained an `uncertain` result. The completed runner no longer retains the
+original private journal and marker key. The safe result does not establish
+zero writes, and an open PR or absent marker ref cannot rule out an unattached
+preparation object. No replay or observer was run. All four allocations remain
+fully charged: four operations, 1,440,000 ms, 768 reads and zero rollbacks.
+
+The diagnostic changes below grant no new allowance and do not resolve that
+outcome. The manifest's historical accounting, thirteen-run baseline and
+first-attempt guard remain unchanged: they cannot authorize a fifteenth run or
+a rerun of the fourteenth. The allocation and review procedure below records
+the now-consumed fourth allocation; it is not a current dispatch instruction.
+
+## Consumed fourth-allocation record
+
+At approval time, all three earlier allocations were consumed. This protocol
+proposed one further allowance for an attended trial of the same nonproduction objective, operation
 key and data-only PR #5 in `whiteredhouse/exacly-delivery-acceptance`.
 The source change and controlled tests grant no operational capacity. A new
 installation may be created only after the exact owner approves the additional
@@ -47,8 +64,10 @@ for this review. The expired selection cannot authorize another installation.
 
 The reviewed [manifest](../config/native-supplemental-trial.json) binds the
 original objective and operation key, all three consumed allocations and their
-evidence, the complete workflow history and this additional allowance. The core checkout is
-`bd60d9d58c44390089a435d075a77f132cb684da`. The selected canary is unchanged:
+evidence, the complete workflow history and the fourth allowance. The current
+diagnostic implementation pins core `49b941d6c3a9002d373a19a52b269391d9aa31a6`;
+this changes neither the historical run's core identity nor its consumed
+authority. The selected canary is unchanged:
 
 | Identity | Fixed value |
 | --- | --- |
@@ -263,7 +282,8 @@ Safe artifacts use only these explicit filenames:
 - `observer-proposal.json` and `observer-approval-instructions.json`;
 - `merge-approval-receipt.json`, `observer-approval-receipt.json`,
   `merge-result.json`, `offline-replay.json`, `observer-result.json` and
-  `trial-report.json`.
+  `trial-report.json`;
+- `native-call-diagnostics.json`, a bounded, create-only diagnostic summary.
 
 Retention stays seven days. The proposal includes the actual path and storage
 identity descriptors needed to review its binding. Private directory contents,
@@ -279,6 +299,27 @@ closed relay reason code, such as `verification_expired`,
 credentials, private paths and tracebacks are never copied into this field.
 These diagnostics describe future executions; they do not recover the missing
 private reason from the historical stopped run.
+
+The native-call summary is collected locally before private cleanup, including
+when a native child fails. Invocation and reconciliation have separate wrapper
+stages, so a failed reconciliation does not hide invocation. The collector
+validates the original store and each retained native result on the original
+host, then projects only closed diagnostics and digest identities. It retains
+only the latest call per method (`inspect`, `invoke`, `reconcile`), at most three
+summaries, and the selected operation's total retained call count, within a
+32 KiB output ceiling. An older runtime without the projection API, missing
+native results or failed collection is explicitly unavailable; it is never
+reported as no effect. A process-boundary result is marked unavailable for its
+own call while earlier validated summaries remain available. Collection makes no provider request, launches no new
+native command and grants no read or write authority.
+
+This summary excludes the journal, key, token, child output, provider bodies and
+headers, private paths and marker message. Collection or artifact failure must
+not change the native outcome, mask its original failure, or allow resend. A
+deliberate stop after a non-applied native result uses the coordinator's fixed
+`native_merge_not_applied` diagnostic; the retained native status remains the
+source of its outcome. None of these new diagnostics can recover the discarded
+failure details from run `44911130619`.
 
 A passing result establishes only this one continuously alive job's positive
 merge, offline replay and separately approved observation. Recovery after

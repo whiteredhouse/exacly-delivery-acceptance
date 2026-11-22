@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+from enum import StrEnum
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "whiteredhouse/exacly-delivery-acceptance"
@@ -21,6 +22,20 @@ UTC = dt.timezone.utc
 
 class Stopped(ValueError):
     """Only fixed local codes may reach the public report."""
+
+
+class CoordinatorStopCode(StrEnum):
+    NATIVE_MERGE_NOT_APPLIED = "native_merge_not_applied"
+
+
+class CoordinatorStopped(Stopped):
+    """An owned coordinator diagnostic; unrelated exception text stays private."""
+
+    def __init__(self, code):
+        if type(code) is not CoordinatorStopCode:
+            raise TypeError("invalid coordinator stop code")
+        self.code = code
+        super().__init__(code.value)
 
 
 def require(value, code="coordinator_validation_failed"):
@@ -302,7 +317,8 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
             relay.recheck_host()
         report = execution.execute(prepared, receipt, token=app_token, **selected)
         packets.write_safe(private / "merge-result.json", report, app_token)
-        require(report.get("status") == "applied", "native_merge_not_applied_do_not_resend")
+        if report.get("status") != "applied":
+            raise CoordinatorStopped(CoordinatorStopCode.NATIVE_MERGE_NOT_APPLIED)
         replay = execution.offline_replay(prepared, report, token=app_token, **selected)
         require(replay.get("status") == "passed" and replay.get("journal_unchanged") is True
                 and type(replay.get("network_syscalls")) is int
@@ -347,6 +363,11 @@ def run(phase, private, core, *, packets, relays, execution, ctx, app_token, rel
 
 def _diagnostic(error, relays):
     fallback = {"component": "unknown", "code": "unclassified_failure"}
+    try:
+        if type(error) is CoordinatorStopped and type(error.code) is CoordinatorStopCode:
+            return {"component": "coordinator", "code": error.code.value}
+    except Exception:
+        return fallback
     if relays is None:
         return fallback
     try:

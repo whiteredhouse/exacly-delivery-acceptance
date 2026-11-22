@@ -17,14 +17,14 @@ from pathlib import Path
 
 
 SPEC_PATH = "config/native-supplemental-trial.json"
-SPEC_DIGEST = "sha256:be604a0949c339587bf1b654c8716ef85ec2dbde6158b284cbabe660751647ae"
+SPEC_DIGEST = "sha256:76c8c5fe6ae625e0a1fad24974505e87133d1ab2b25f9de0b7bf18f7b3e8d42a"
 ACCOUNTING_DIGEST = "sha256:427f35a3b432d18c307bd3de87f561b2d1f6346107d4024116fdd9988bdd5916"
 PROFILE = {
-    "core_revision": "bd60d9d58c44390089a435d075a77f132cb684da",
+    "core_revision": "49b941d6c3a9002d373a19a52b269391d9aa31a6",
     "spec_digest": SPEC_DIGEST,
     "native_pins": {
-        "automatic_merge.py": "e6646012de31fb473f298861fa482bc7741e4592bd84375feaa1ebed1f9356b7",
-        "github_merge.py": "207ac9bc6df50f8baf8ceafb7568163a26ccb02b2ee79da86707404298587d28",
+        "automatic_merge.py": "2ccfee898011253df5610ff2b9a12da62d082847a531dbcc0fc7b80f6232cf5a",
+        "github_merge.py": "32cc7cc7b9e0c1d04747f4a3bb85932874b71d301382b0804c0e01c22f94e804",
     },
     "accounting_digest": ACCOUNTING_DIGEST,
 }

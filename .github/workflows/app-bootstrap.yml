@@ -128,11 +128,11 @@ jobs:
           ref: ${{ github.sha }}
           path: diagnostic
           persist-credentials: false
-      - name: Check out the exact merged native runtime
+      - name: Check out the exact reviewed native runtime
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: whiteredhouse/exacly
-          ref: bd60d9d58c44390089a435d075a77f132cb684da
+          ref: 49b941d6c3a9002d373a19a52b269391d9aa31a6
           path: exacly-runtime
           persist-credentials: false
       - name: Install the fixed runtime tools before minting
@@ -250,6 +250,7 @@ jobs:
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-approval-receipt.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-approval-receipt.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/merge-result.json
+            ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/native-call-diagnostics.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/offline-replay.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/observer-result.json
             ${{ runner.temp }}/native-positive-${{ github.run_id }}-${{ github.run_attempt }}/trial-report.json
